@@ -480,6 +480,13 @@ impl CosmicBg {
             .canvas
             .update_resolution(gpu.queue(), physical_w, physical_h);
 
+        // Set viewport destination to logical size so compositor scales correctly
+        if let Some((logical_w, logical_h)) = layer.size {
+            layer
+                .viewport
+                .set_destination(logical_w as i32, logical_h as i32);
+        }
+
         let wl_surface = layer.layer.wl_surface();
         wl_surface.frame(qh, wl_surface.clone());
         layer.layer.commit();
@@ -630,6 +637,13 @@ impl CosmicBg {
                     surface_config,
                     canvas,
                 });
+
+                // Set viewport destination to logical size so compositor scales correctly
+                if let Some((logical_w, logical_h)) = layer.size {
+                    layer
+                        .viewport
+                        .set_destination(logical_w as i32, logical_h as i32);
+                }
 
                 // Request first frame callback to start animation
                 wl_surface.frame(&self.qh, wl_surface.clone());
