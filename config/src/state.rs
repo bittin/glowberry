@@ -1,8 +1,8 @@
-use cosmic_config::{Config, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
+use cosmic_config::{cosmic_config_derive::CosmicConfigEntry, Config, CosmicConfigEntry};
 use derive_setters::Setters;
 use serde::{Deserialize, Serialize};
 
-use crate::{NAME, Source};
+use crate::{Source, NAME};
 
 #[derive(Default, Debug, Deserialize, Serialize, Clone, PartialEq, Setters, CosmicConfigEntry)]
 #[serde(deny_unknown_fields)]

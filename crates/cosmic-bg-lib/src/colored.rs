@@ -84,3 +84,18 @@ pub fn gradient(
 
     Ok(imgbuf)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::single;
+
+    #[test]
+    fn single_color_buffer_matches_size() {
+        let width = 64;
+        let height = 32;
+        let buffer = single([0.2, 0.4, 0.6], width, height);
+
+        assert_eq!(buffer.width(), width);
+        assert_eq!(buffer.height(), height);
+    }
+}

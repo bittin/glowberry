@@ -8,6 +8,7 @@ rust-version = "1.85"
 color-eyre = "0.6.5"
 colorgrad = { workspace = true }
 cosmic-bg-config = { path = "./config" }
+cosmic-bg-lib = { workspace = true }
 eyre = "0.6.12"
 fast_image_resize = { version = "5.1.4", features = ["image"] }
 image = { workspace = true, features = ["hdr", "jpeg", "png", "rayon", "webp"] }
@@ -20,10 +21,11 @@ tracing-subscriber = "0.3.20"
 walkdir = "2.5"
 
 [workspace]
-members = ["config"]
+members = ["config", "crates/cosmic-bg-lib"]
 
 [workspace.dependencies]
 colorgrad = "0.7.2"
+cosmic-bg-lib = { path = "crates/cosmic-bg-lib" }
 image = { version = "0.25.6", default-features = false }
 tracing = "0.1.41"
 

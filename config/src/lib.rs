@@ -118,6 +118,45 @@ pub enum Source {
     Path(PathBuf),
     /// A background color or gradient.
     Color(Color),
+    /// A GPU-rendered shader for live wallpapers.
+    Shader(ShaderSource),
+}
+
+/// Configuration for a shader-based live wallpaper.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ShaderSource {
+    /// The shader code source (path or inline).
+    pub shader: ShaderContent,
+    /// Optional background image the shader can sample.
+    #[serde(default)]
+    pub background_image: Option<PathBuf>,
+    /// Shader language (auto-detected from file extension if path).
+    #[serde(default)]
+    pub language: ShaderLanguage,
+    /// Target frame rate (1-60, default 30).
+    #[serde(default = "default_frame_rate")]
+    pub frame_rate: u8,
+}
+
+fn default_frame_rate() -> u8 {
+    30
+}
+
+/// Where the shader code comes from.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub enum ShaderContent {
+    /// Path to a shader file (.wgsl, GLSL is not supported yet).
+    Path(PathBuf),
+    /// Inline shader code.
+    Code(String),
+}
+
+/// Supported shader languages.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShaderLanguage {
+    #[default]
+    Wgsl,
+    Glsl,
 }
 
 impl Entry {

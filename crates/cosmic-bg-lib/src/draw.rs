@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::{CosmicBg, CosmicBgLayer};
 use image::{DynamicImage, GenericImageView};
 use sctk::{
-    reexports::client::{QueueHandle, protocol::wl_shm},
-    shell::WaylandSurface,
+    reexports::{
+        client::{
+            protocol::wl_callback, protocol::wl_shm, protocol::wl_surface, Dispatch, QueueHandle,
+        },
+        protocols::wp::viewporter::client::wp_viewport,
+    },
+    shell::{wlr_layer::LayerSurface, WaylandSurface},
     shm::slot::{Buffer, CreateBufferError, SlotPool},
 };
 
@@ -41,22 +45,25 @@ pub fn canvas(
     Ok(buffer)
 }
 
-pub fn layer_surface(
-    layer: &mut CosmicBgLayer,
-    queue_handle: &QueueHandle<CosmicBg>,
+pub fn layer_surface<T>(
+    layer_surface: &LayerSurface,
+    viewport: &wp_viewport::WpViewport,
+    queue_handle: &QueueHandle<T>,
     buffer: &Buffer,
     buffer_damage: (i32, i32),
-) {
-    let (width, height) = layer.size.unwrap();
+    size: (u32, u32),
+) where
+    T: Dispatch<wl_callback::WlCallback, wl_surface::WlSurface> + 'static,
+{
+    let (width, height) = size;
 
-    let wl_surface = layer.layer.wl_surface();
+    let wl_surface = layer_surface.wl_surface();
 
     // Damage the entire window
     wl_surface.damage_buffer(0, 0, buffer_damage.0, buffer_damage.1);
 
     // Request our next frame
-    layer
-        .layer
+    layer_surface
         .wl_surface()
         .frame(queue_handle, wl_surface.clone());
 
@@ -65,7 +72,7 @@ pub fn layer_surface(
         tracing::error!(?why, "buffer attachment failed");
     }
 
-    layer.viewport.set_destination(width as i32, height as i32);
+    viewport.set_destination(width as i32, height as i32);
 
     wl_surface.commit();
 }

@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::{CosmicBg, CosmicBgLayer};
-
-use std::{
-    collections::VecDeque,
-    fs::{self, File},
-    path::PathBuf,
-    time::{Duration, Instant},
+use crate::{colored, draw, engine::CosmicBg, engine::CosmicBgLayer, scaler};
+use cosmic_bg_config::{
+    state::State, Color, Entry, SamplingMethod, ScalingMode, ShaderSource, Source,
 };
-
-use cosmic_bg_config::{Color, Entry, SamplingMethod, ScalingMode, Source, state::State};
 use cosmic_config::CosmicConfigEntry;
 use eyre::eyre;
 use image::{DynamicImage, ImageReader};
@@ -18,10 +12,17 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rand::{rng, seq::SliceRandom};
 use sctk::reexports::{
     calloop::{
-        self, RegistrationToken,
+        self,
         timer::{TimeoutAction, Timer},
+        RegistrationToken,
     },
     client::QueueHandle,
+};
+use std::{
+    collections::VecDeque,
+    fs::{self, File},
+    path::PathBuf,
+    time::{Duration, Instant},
 };
 use tracing::error;
 use walkdir::WalkDir;
@@ -109,12 +110,12 @@ impl Wallpaper {
                 continue;
             };
 
-            let Some((width, height)) = layer.size else {
+            let Some((layer_width, layer_height)) = layer.size else {
                 continue;
             };
 
-            let width = width * fractional_scale / 120;
-            let height = height * fractional_scale / 120;
+            let width = layer_width * fractional_scale / 120;
+            let height = layer_height * fractional_scale / 120;
 
             if cur_resized_img
                 .as_ref()
@@ -166,23 +167,21 @@ impl Wallpaper {
 
                         match self.entry.scaling_mode {
                             ScalingMode::Fit(color) => {
-                                Some(crate::scaler::fit(img, &color, width, height))
+                                Some(scaler::fit(img, &color, width, height))
                             }
 
-                            ScalingMode::Zoom => Some(crate::scaler::zoom(img, width, height)),
+                            ScalingMode::Zoom => Some(scaler::zoom(img, width, height)),
 
-                            ScalingMode::Stretch => {
-                                Some(crate::scaler::stretch(img, width, height))
-                            }
+                            ScalingMode::Stretch => Some(scaler::stretch(img, width, height)),
                         }
                     }
 
                     Source::Color(Color::Single([r, g, b])) => Some(image::DynamicImage::from(
-                        crate::colored::single([*r, *g, *b], width, height),
+                        colored::single([*r, *g, *b], width, height),
                     )),
 
                     Source::Color(Color::Gradient(gradient)) => {
-                        match crate::colored::gradient(gradient, width, height) {
+                        match colored::gradient(gradient, width, height) {
                             Ok(buffer) => Some(image::DynamicImage::from(buffer)),
                             Err(why) => {
                                 tracing::error!(
@@ -194,20 +193,31 @@ impl Wallpaper {
                             }
                         }
                     }
+
+                    // Shader sources are handled by GPU renderer, should not reach here
+                    Source::Shader(_) => {
+                        tracing::warn!("Shader source in CPU draw path - this should not happen");
+                        None
+                    }
                 };
             }
 
-            let image = cur_resized_img.as_ref().unwrap();
+            let Some(image) = cur_resized_img.as_ref() else {
+                tracing::debug!(source = ?self.entry.source, "Skipping CPU draw without image");
+                continue;
+            };
             let buffer_result =
-                crate::draw::canvas(pool, image, width as i32, height as i32, width as i32 * 4);
+                draw::canvas(pool, image, width as i32, height as i32, width as i32 * 4);
 
             match buffer_result {
                 Ok(buffer) => {
-                    crate::draw::layer_surface(
-                        layer,
+                    draw::layer_surface(
+                        &layer.layer,
+                        &layer.viewport,
                         &self.queue_handle,
                         &buffer,
                         (width as i32, height as i32),
+                        (layer_width, layer_height),
                     );
                     layer.needs_redraw = false;
 
@@ -302,6 +312,13 @@ impl Wallpaper {
             Source::Color(ref c) => {
                 self.current_source = Some(Source::Color(c.clone()));
             }
+
+            Source::Shader(ref shader) => {
+                // Shader wallpapers are handled by the GPU renderer
+                // Just set the source, GPU initialization happens in CosmicBg::init_gpu_layer
+                self.current_source = Some(Source::Shader(shader.clone()));
+                tracing::info!("Shader wallpaper source configured");
+            }
         };
         if let Err(err) = self.save_state() {
             error!("{err}");
@@ -309,9 +326,26 @@ impl Wallpaper {
         self.image_queue = image_queue;
     }
 
+    /// Check if this wallpaper uses a shader source.
+    pub fn is_shader(&self) -> bool {
+        matches!(self.entry.source, Source::Shader(_))
+    }
+
+    /// Get the shader source if this is a shader wallpaper.
+    pub fn shader_source(&self) -> Option<&ShaderSource> {
+        match &self.entry.source {
+            Source::Shader(s) => Some(s),
+            _ => None,
+        }
+    }
+
     fn watch_source(&self, tx: calloop::channel::SyncSender<(String, notify::Event)>) {
-        let Source::Path(ref source) = self.entry.source else {
-            return;
+        // Only watch file sources for changes
+        let source = match &self.entry.source {
+            Source::Path(path) => path,
+            // For shader sources, we could watch the shader file for hot-reloading
+            // but that's a future enhancement
+            Source::Shader(_) | Source::Color(_) => return,
         };
 
         let output = self.entry.output.clone();
