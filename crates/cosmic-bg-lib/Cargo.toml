@@ -15,7 +15,6 @@ notify = "8.2.0"
 pollster = "0.4"
 rand = "0.9.2"
 raw-window-handle = "0.6"
-rustix = { version = "0.38", features = ["fs", "shm"] }
 sctk = { package = "smithay-client-toolkit", version = "0.20.0" }
 tracing = { workspace = true }
 walkdir = "2.5"
