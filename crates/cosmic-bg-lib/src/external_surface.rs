@@ -6,11 +6,18 @@
 //! cosmic-bg layer surface approach doesn't work for lock screens. This module
 //! provides functions to load the user's background image/color for rendering
 //! directly on the lock surface.
+//!
+//! For shader backgrounds, this module provides [`ShaderRenderer`] which renders
+//! shaders to offscreen textures and reads them back as images.
 
+use crate::fragment_canvas::FragmentCanvas;
+use crate::gpu::GpuRenderer;
 use crate::user_context::UserContext;
-use cosmic_bg_config::{Color, Config, Source};
+use cosmic_bg_config::{Color, Config, ShaderSource, Source};
 use image::DynamicImage;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread::{self, JoinHandle};
 
 /// Background source information for static rendering.
 #[derive(Debug, Clone)]
@@ -22,7 +29,8 @@ pub enum BackgroundSource {
     /// A gradient with colors and radius.
     Gradient { colors: Vec<[f32; 3]>, radius: f32 },
     /// A shader background (animated, requires special handling).
-    Shader,
+    /// Contains the shader source configuration.
+    Shader(ShaderSource),
 }
 
 /// Errors that can occur when loading backgrounds.
@@ -84,9 +92,9 @@ pub fn load_background_image(
             // Create a gradient image
             Some(create_gradient_image(&colors, radius, width, height))
         }
-        BackgroundSource::Shader => {
-            // Shader backgrounds need special handling
-            // For now, return None and let the caller handle the fallback
+        BackgroundSource::Shader(_) => {
+            // Shader backgrounds need special handling via ShaderRenderer
+            // Return None and let the caller use ShaderRenderer for animated frames
             None
         }
     }
@@ -96,8 +104,23 @@ pub fn load_background_image(
 pub fn has_shader_background(user_context: &UserContext) -> bool {
     matches!(
         load_background_source(user_context),
-        Some(BackgroundSource::Shader)
+        Some(BackgroundSource::Shader(_))
     )
+}
+
+/// Load the shader source for a user's shader background.
+///
+/// Returns `None` if the user doesn't have a shader background configured.
+pub fn load_shader_source(user_context: &UserContext) -> Option<ShaderSource> {
+    let _env_guard = user_context.apply();
+
+    let config_context = cosmic_bg_config::context().ok()?;
+    let config = Config::load(&config_context).ok()?;
+
+    match &config.default_background.source {
+        Source::Shader(shader_source) => Some(shader_source.clone()),
+        _ => None,
+    }
 }
 
 fn source_to_background(source: &Source) -> Option<BackgroundSource> {
@@ -108,7 +131,7 @@ fn source_to_background(source: &Source) -> Option<BackgroundSource> {
             colors: gradient.colors.to_vec(),
             radius: gradient.radius,
         }),
-        Source::Shader(_) => Some(BackgroundSource::Shader),
+        Source::Shader(shader_source) => Some(BackgroundSource::Shader(shader_source.clone())),
     }
 }
 
@@ -190,6 +213,273 @@ fn create_gradient_image(
     DynamicImage::ImageRgb8(img)
 }
 
+/// A rendered shader frame.
+pub struct ShaderFrame {
+    /// RGBA pixel data.
+    pub data: Vec<u8>,
+    /// Frame width.
+    pub width: u32,
+    /// Frame height.
+    pub height: u32,
+}
+
+/// An offscreen shader renderer for lock screens.
+///
+/// This renders shader backgrounds to offscreen textures and provides
+/// the pixel data for display in iced image widgets.
+///
+/// Uses double-buffering and continuous rendering for smooth animation.
+pub struct ShaderRenderer {
+    frame_rx: mpsc::Receiver<ShaderFrame>,
+    stop_tx: mpsc::Sender<()>,
+    _thread: JoinHandle<()>,
+}
+
+impl ShaderRenderer {
+    /// Create a new shader renderer.
+    ///
+    /// Returns `None` if shader initialization fails.
+    pub fn new(shader_source: &ShaderSource, width: u32, height: u32) -> Option<Self> {
+        let (frame_tx, frame_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let shader_source = shader_source.clone();
+        let thread = thread::spawn(move || {
+            if let Err(e) =
+                shader_render_loop_continuous(shader_source, width, height, frame_tx, stop_rx)
+            {
+                tracing::error!("Shader renderer error: {}", e);
+            }
+        });
+
+        Some(Self {
+            frame_rx,
+            stop_tx,
+            _thread: thread,
+        })
+    }
+
+    /// Try to receive a rendered frame without blocking.
+    /// Returns the most recent frame available, discarding older ones.
+    pub fn try_recv_frame(&self) -> Option<ShaderFrame> {
+        let mut latest_frame = None;
+        // Drain all available frames and keep only the latest
+        while let Ok(frame) = self.frame_rx.try_recv() {
+            latest_frame = Some(frame);
+        }
+        latest_frame
+    }
+}
+
+impl Drop for ShaderRenderer {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(());
+    }
+}
+
+/// Double-buffer state for async GPU readback.
+struct DoubleBuffer {
+    buffers: [wgpu::Buffer; 2],
+    current: usize,
+    pending_map: Option<usize>,
+}
+
+impl DoubleBuffer {
+    fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self {
+            buffers: [
+                create_read_buffer(device, width, height),
+                create_read_buffer(device, width, height),
+            ],
+            current: 0,
+            pending_map: None,
+        }
+    }
+
+    fn current_buffer(&self) -> &wgpu::Buffer {
+        &self.buffers[self.current]
+    }
+
+    fn swap(&mut self) {
+        self.current = 1 - self.current;
+    }
+}
+
+/// Continuous render loop with double-buffering for smooth animation.
+fn shader_render_loop_continuous(
+    shader_source: ShaderSource,
+    width: u32,
+    height: u32,
+    frame_tx: mpsc::Sender<ShaderFrame>,
+    stop_rx: mpsc::Receiver<()>,
+) -> Result<(), ExternalSurfaceError> {
+    use std::time::{Duration, Instant};
+
+    // Initialize GPU renderer
+    let gpu = GpuRenderer::new();
+
+    // Create offscreen texture and canvas
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let canvas = FragmentCanvas::new(&gpu, &shader_source, format)
+        .map_err(|e| ExternalSurfaceError::Shader(e.to_string()))?;
+
+    let texture = create_offscreen_texture(gpu.device(), width, height, format);
+    let mut double_buffer = DoubleBuffer::new(gpu.device(), width, height);
+
+    canvas.update_resolution(gpu.queue(), width, height);
+
+    // Target ~30 FPS
+    let frame_duration = Duration::from_millis(33);
+    let mut last_frame = Instant::now();
+
+    loop {
+        // Check for stop signal
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+
+        // Frame rate limiting
+        let elapsed = last_frame.elapsed();
+        if elapsed < frame_duration {
+            thread::sleep(frame_duration - elapsed);
+        }
+        last_frame = Instant::now();
+
+        // Render to texture
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        canvas.render(&gpu, &view);
+
+        // Copy texture to current buffer
+        let bytes_per_row = aligned_bytes_per_row(width);
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cosmic-bg: readback encoder"),
+            });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: double_buffer.current_buffer(),
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        gpu.queue().submit(std::iter::once(encoder.finish()));
+
+        // Map and read the buffer (this is the slow part, but we're in a dedicated thread)
+        let buffer = double_buffer.current_buffer();
+        let buffer_slice = buffer.slice(..);
+
+        let (map_tx, map_rx) = mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = map_tx.send(result);
+        });
+
+        // Poll until mapping completes
+        let _ = gpu.device().poll(wgpu::PollType::Wait);
+        if map_rx.recv().is_err() {
+            continue;
+        }
+
+        // Read pixel data
+        let data = buffer_slice.get_mapped_range();
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+
+        let pixels = if bytes_per_row == unpadded_bytes_per_row {
+            data.to_vec()
+        } else {
+            let mut pixels = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+            for row in 0..height {
+                let start = (row * bytes_per_row) as usize;
+                let end = start + unpadded_bytes_per_row as usize;
+                pixels.extend_from_slice(&data[start..end]);
+            }
+            pixels
+        };
+
+        drop(data);
+        buffer.unmap();
+
+        // Send frame (non-blocking, drop if channel is full)
+        let frame = ShaderFrame {
+            data: pixels,
+            width,
+            height,
+        };
+
+        // Use try_send to avoid blocking if the receiver isn't keeping up
+        if frame_tx.send(frame).is_err() {
+            // Receiver dropped, exit
+            break;
+        }
+
+        // Swap buffers for next frame
+        double_buffer.swap();
+    }
+
+    Ok(())
+}
+
+/// Create an offscreen texture for rendering.
+fn create_offscreen_texture(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("cosmic-bg: offscreen texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// Create a buffer for reading back pixel data.
+fn create_read_buffer(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Buffer {
+    let bytes_per_row = aligned_bytes_per_row(width);
+    let buffer_size = (bytes_per_row * height) as u64;
+
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cosmic-bg: readback buffer"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    })
+}
+
+/// Calculate the aligned bytes per row for wgpu.
+fn aligned_bytes_per_row(width: u32) -> u32 {
+    let bytes_per_pixel = 4u32; // RGBA
+    let unpadded = width * bytes_per_pixel;
+    let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    ((unpadded + alignment - 1) / alignment) * alignment
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +504,17 @@ mod tests {
         let rgb = img.to_rgb8();
         let pixel = rgb.get_pixel(5, 5);
         assert_eq!(pixel.0, [0, 255, 0]);
+    }
+
+    #[test]
+    fn aligned_bytes_per_row_alignment() {
+        // Width 1 should be padded to alignment
+        let aligned = aligned_bytes_per_row(1);
+        assert_eq!(aligned, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+
+        // Width that's already aligned
+        let pixels_per_alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 4;
+        let aligned = aligned_bytes_per_row(pixels_per_alignment);
+        assert_eq!(aligned, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     }
 }

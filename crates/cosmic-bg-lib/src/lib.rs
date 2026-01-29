@@ -6,14 +6,16 @@ pub mod fragment_canvas;
 pub mod gpu;
 pub mod img_source;
 pub mod scaler;
+pub mod shader_shm;
 pub mod user_context;
 pub mod wallpaper;
 
 pub use engine::{BackgroundEngine, BackgroundHandle, CosmicBg, CosmicBgLayer, EngineConfig};
 pub use external_surface::{
-    has_shader_background, load_background_image, load_background_source, BackgroundSource,
-    ExternalSurfaceError,
+    has_shader_background, load_background_image, load_background_source, load_shader_source,
+    BackgroundSource, ExternalSurfaceError, ShaderFrame, ShaderRenderer,
 };
+pub use shader_shm::{ShaderShmBuffer, ShaderShmRenderer};
 pub use user_context::{EnvGuard, UserContext};
 pub use wallpaper::Wallpaper;
 
