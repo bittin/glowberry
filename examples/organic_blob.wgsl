@@ -38,7 +38,13 @@ fn main(@builtin(position) fragCoord: vec4<f32>) -> @location(0) vec4<f32> {
         let rz = map(p);
         let f = clamp((rz - map(p + 0.1)) * 0.5, -0.1, 1.0);
         let l = vec3<f32>(0.1, 0.3, 0.4) + vec3<f32>(5.0, 2.5, 3.0) * f;
-        cl = cl * l + smoothstep(2.5, 0.0, rz) * 0.7 * l;
+        let glow = smoothstep(2.5, 0.0, rz);
+        cl = cl * l * glow + glow * 0.7 * l;
+        
+        // Sharp edge highlight at surface boundary
+        let edge = step(abs(rz), 0.002) * 1.5;
+        cl += vec3<f32>(edge);
+        
         d += min(rz, 1.0);
     }
     
