@@ -5,9 +5,9 @@ use crate::{
     user_context::{EnvGuard, UserContext},
     wallpaper::Wallpaper,
 };
-use cosmic_bg_config::{state::State, Config};
 use cosmic_config::{calloop::ConfigWatchSource, CosmicConfigEntry};
 use eyre::{eyre, Context};
+use glowberry_config::{state::State, Config};
 use sctk::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_layer, delegate_output, delegate_registry, delegate_shm,
@@ -150,7 +150,7 @@ impl BackgroundEngine {
                 .map_err(|err| eyre!("failed to insert stop channel into event loop: {err}"))?;
         }
 
-        let config_context = cosmic_bg_config::context();
+        let config_context = glowberry_config::context();
 
         let config = match config_context {
             Ok(config_context) => {
@@ -165,13 +165,13 @@ impl BackgroundEngine {
 
                         for key in &keys {
                             match key.as_str() {
-                                cosmic_bg_config::BACKGROUNDS => {
+                                glowberry_config::BACKGROUNDS => {
                                     tracing::debug!("updating backgrounds");
                                     state.config.load_backgrounds(&conf_context);
                                     changes_applied = true;
                                 }
 
-                                cosmic_bg_config::DEFAULT_BACKGROUND => {
+                                glowberry_config::DEFAULT_BACKGROUND => {
                                     tracing::debug!("updating default background");
                                     let entry = conf_context.default_background();
 
@@ -181,7 +181,7 @@ impl BackgroundEngine {
                                     }
                                 }
 
-                                cosmic_bg_config::SAME_ON_ALL => {
+                                glowberry_config::SAME_ON_ALL => {
                                     tracing::debug!("updating same_on_all");
                                     state.config.same_on_all = conf_context.same_on_all();
 
@@ -301,10 +301,10 @@ impl BackgroundEngine {
         let has_shader_source = config
             .backgrounds
             .iter()
-            .any(|bg| matches!(bg.source, cosmic_bg_config::Source::Shader(_)))
+            .any(|bg| matches!(bg.source, glowberry_config::Source::Shader(_)))
             || matches!(
                 config.default_background.source,
-                cosmic_bg_config::Source::Shader(_)
+                glowberry_config::Source::Shader(_)
             );
 
         // Lazily initialize GPU renderer only if needed
@@ -584,7 +584,7 @@ impl CosmicBg {
         &mut self,
         wallpaper_idx: usize,
         layer_idx: usize,
-        shader_source: &cosmic_bg_config::ShaderSource,
+        shader_source: &glowberry_config::ShaderSource,
     ) {
         // Ensure GPU renderer is initialized
         if self.gpu_renderer.is_none() {
@@ -628,8 +628,19 @@ impl CosmicBg {
 
         // Create fragment canvas
         match fragment_canvas::FragmentCanvas::new(gpu, shader_source, surface_config.format) {
-            Ok(canvas) => {
+            Ok(mut canvas) => {
                 canvas.update_resolution(gpu.queue(), physical_width, physical_height);
+
+                // Render the first frame immediately to avoid showing default wallpaper
+                if let Ok(surface_texture) = surface.get_current_texture() {
+                    let view = surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default());
+                    canvas.render(gpu, &view);
+                    surface_texture.present();
+                    canvas.mark_frame_rendered();
+                    tracing::debug!(output = ?output_name, "Rendered initial shader frame");
+                }
 
                 let layer = &mut self.wallpapers[wallpaper_idx].layers[layer_idx];
                 layer.gpu_state = Some(GpuLayerState {
@@ -645,7 +656,7 @@ impl CosmicBg {
                         .set_destination(logical_w as i32, logical_h as i32);
                 }
 
-                // Request first frame callback to start animation
+                // Request first frame callback to continue animation
                 wl_surface.frame(&self.qh, wl_surface.clone());
                 layer.layer.commit();
 
@@ -965,7 +976,7 @@ impl LayerShellHandler for CosmicBg {
         let (w, h) = configure.new_size;
 
         // Find the wallpaper and layer index for this surface
-        let mut found_info: Option<(usize, usize, bool, Option<cosmic_bg_config::ShaderSource>)> =
+        let mut found_info: Option<(usize, usize, bool, Option<glowberry_config::ShaderSource>)> =
             None;
 
         for (wp_idx, wallpaper) in self.wallpapers.iter_mut().enumerate() {

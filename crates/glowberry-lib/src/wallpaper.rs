@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::{colored, draw, engine::CosmicBg, engine::CosmicBgLayer, scaler};
-use cosmic_bg_config::{
-    state::State, Color, Entry, SamplingMethod, ScalingMode, ShaderSource, Source,
-};
 use cosmic_config::CosmicConfigEntry;
 use eyre::eyre;
+use glowberry_config::{
+    state::State, Color, Entry, SamplingMethod, ScalingMode, ShaderSource, Source,
+};
 use image::{DynamicImage, ImageReader};
 use jxl_oxide::integration::JxlDecoder;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};

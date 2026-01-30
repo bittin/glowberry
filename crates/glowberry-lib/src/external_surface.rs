@@ -3,12 +3,12 @@
 //! Utilities for loading background images for session lock screens.
 //!
 //! Session lock surfaces block all layer surfaces underneath them, so the normal
-//! cosmic-bg layer surface approach doesn't work for lock screens. This module
+//! GlowBerry layer surface approach doesn't work for lock screens. This module
 //! provides functions to load the user's background image/color for rendering
 //! directly on the lock surface.
 
 use crate::user_context::UserContext;
-use cosmic_bg_config::{Color, Config, ShaderSource, Source};
+use glowberry_config::{Color, Config, ShaderSource, Source};
 use image::DynamicImage;
 use std::path::PathBuf;
 
@@ -40,13 +40,13 @@ pub enum ExternalSurfaceError {
 
 /// Load the background source for a user.
 ///
-/// This reads the user's cosmic-bg configuration and returns the appropriate
+/// This reads the user's GlowBerry configuration and returns the appropriate
 /// background source. For image paths, it returns the first image in a directory
 /// if the path is a directory.
 pub fn load_background_source(user_context: &UserContext) -> Option<BackgroundSource> {
     let _env_guard = user_context.apply();
 
-    let config_context = cosmic_bg_config::context().ok()?;
+    let config_context = glowberry_config::context().ok()?;
     let config = Config::load(&config_context).ok()?;
 
     // Use the default background entry
@@ -106,7 +106,7 @@ pub fn has_shader_background(user_context: &UserContext) -> bool {
 pub fn load_shader_source(user_context: &UserContext) -> Option<ShaderSource> {
     let _env_guard = user_context.apply();
 
-    let config_context = cosmic_bg_config::context().ok()?;
+    let config_context = glowberry_config::context().ok()?;
     let config = Config::load(&config_context).ok()?;
 
     match &config.default_background.source {

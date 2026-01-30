@@ -6,13 +6,27 @@ use cosmic_config::{Config as CosmicConfig, ConfigGet, ConfigSet};
 use derive_setters::Setters;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashSet, path::PathBuf};
+use thiserror::Error;
 
-pub const NAME: &str = "com.system76.CosmicBackground";
+/// GlowBerry config namespace
+pub const NAME: &str = "io.github.hojjatabdollahi.glowberry";
+/// Original cosmic-bg config namespace (for import/export)
+pub const COSMIC_BG_NAME: &str = "com.system76.CosmicBackground";
 pub const BACKGROUNDS: &str = "backgrounds";
 pub const DEFAULT_BACKGROUND: &str = "all";
 pub const SAME_ON_ALL: &str = "same-on-all";
+pub const PREFER_LOW_POWER: &str = "prefer-low-power";
 
-/// Create a context to the `cosmic-bg` config.
+/// Errors that can occur during config operations
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("cosmic-config error: {0}")]
+    CosmicConfig(#[from] cosmic_config::Error),
+    #[error("no configuration found to import")]
+    NoConfigToImport,
+}
+
+/// Create a context to the GlowBerry config.
 ///
 /// # Errors
 ///
@@ -21,20 +35,129 @@ pub fn context() -> Result<Context, cosmic_config::Error> {
     CosmicConfig::new(NAME, 1).map(Context)
 }
 
+/// Create a context to the original cosmic-bg config (for import/export).
+///
+/// # Errors
+///
+/// Fails if cosmic-config paths are missing or cannot be created.
+pub fn cosmic_bg_context() -> Result<Context, cosmic_config::Error> {
+    CosmicConfig::new(COSMIC_BG_NAME, 1).map(Context)
+}
+
+/// Import configuration from the official cosmic-bg.
+///
+/// This reads settings from `com.system76.CosmicBackground` and writes them
+/// to `io.github.hojjatabdollahi.glowberry`.
+///
+/// # Returns
+///
+/// The number of entries imported.
+///
+/// # Errors
+///
+/// Fails if the source config cannot be read or the destination cannot be written.
+pub fn import_from_cosmic_bg() -> Result<usize, ConfigError> {
+    let source_ctx = cosmic_bg_context()?;
+    let dest_ctx = context()?;
+
+    // Import same-on-all setting
+    let same_on_all = source_ctx.same_on_all();
+    dest_ctx.0.set(SAME_ON_ALL, same_on_all)?;
+
+    // Import default background
+    if let Ok(default_bg) = source_ctx.entry("all") {
+        dest_ctx.0.set("all", default_bg)?;
+    }
+
+    // Import per-output backgrounds
+    let backgrounds = source_ctx.backgrounds();
+    let mut count = 0;
+
+    for output in &backgrounds {
+        let key = format!("output.{output}");
+        if let Ok(entry) = source_ctx.entry(&key) {
+            dest_ctx.0.set(&key, entry)?;
+            count += 1;
+        }
+    }
+
+    // Update backgrounds list
+    if !backgrounds.is_empty() {
+        dest_ctx.0.set(BACKGROUNDS, backgrounds)?;
+    }
+
+    Ok(count + 1) // +1 for default background
+}
+
+/// Export configuration to the official cosmic-bg format.
+///
+/// This reads settings from `io.github.hojjatabdollahi.glowberry` and writes them
+/// to `com.system76.CosmicBackground`.
+///
+/// # Returns
+///
+/// The number of entries exported.
+///
+/// # Errors
+///
+/// Fails if the source config cannot be read or the destination cannot be written.
+pub fn export_to_cosmic_bg() -> Result<usize, ConfigError> {
+    let source_ctx = context()?;
+    let dest_ctx = cosmic_bg_context()?;
+
+    // Export same-on-all setting
+    let same_on_all = source_ctx.same_on_all();
+    dest_ctx.0.set(SAME_ON_ALL, same_on_all)?;
+
+    // Export default background
+    if let Ok(default_bg) = source_ctx.entry("all") {
+        dest_ctx.0.set("all", default_bg)?;
+    }
+
+    // Export per-output backgrounds
+    let backgrounds = source_ctx.backgrounds();
+    let mut count = 0;
+
+    for output in &backgrounds {
+        let key = format!("output.{output}");
+        if let Ok(entry) = source_ctx.entry(&key) {
+            dest_ctx.0.set(&key, entry)?;
+            count += 1;
+        }
+    }
+
+    // Update backgrounds list
+    if !backgrounds.is_empty() {
+        dest_ctx.0.set(BACKGROUNDS, backgrounds)?;
+    }
+
+    Ok(count + 1) // +1 for default background
+}
+
+/// Check if cosmic-bg has existing configuration that can be imported.
+#[must_use]
+pub fn has_cosmic_bg_config() -> bool {
+    if let Ok(ctx) = cosmic_bg_context() {
+        // Check if there's a default background or any per-output backgrounds
+        ctx.entry("all").is_ok() || !ctx.backgrounds().is_empty()
+    } else {
+        false
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Context(pub CosmicConfig);
 
 impl Context {
     /// Get all stored backgrounds from cosmic-config.
     ///
-    /// # Errors
-    ///
-    /// Fails if the config is missing or fails to parse.
+    /// Returns an empty vector if the key doesn't exist or fails to parse.
     pub fn backgrounds(&self) -> Vec<String> {
         match self.0.get::<Vec<String>>(BACKGROUNDS) {
             Ok(value) => value,
             Err(why) => {
-                tracing::error!(?why, "error reading background config");
+                // This is expected when no per-output backgrounds are configured
+                tracing::debug!(?why, "no per-output backgrounds configured");
                 Vec::new()
             }
         }
@@ -69,6 +192,21 @@ impl Context {
             return self.0.set(SAME_ON_ALL, value);
         }
 
+        Ok(())
+    }
+
+    /// Get the prefer low power GPU setting.
+    /// When enabled, uses integrated GPU for shader rendering to save power.
+    #[must_use]
+    pub fn prefer_low_power(&self) -> bool {
+        self.0.get::<bool>(PREFER_LOW_POWER).unwrap_or(true)
+    }
+
+    /// Set the prefer low power GPU setting.
+    pub fn set_prefer_low_power(&self, value: bool) -> Result<(), cosmic_config::Error> {
+        if self.prefer_low_power() != value {
+            return self.0.set(PREFER_LOW_POWER, value);
+        }
         Ok(())
     }
 }

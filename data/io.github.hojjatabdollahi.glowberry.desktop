@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=GlowBerry Background
+Comment=GlowBerry background service with live shader wallpaper support
+Type=Application
+Exec=glowberry
+Terminal=false
+Categories=Settings;DesktopSettings;
+Keywords=wallpaper;background;shader;live;animated;
+Icon=io.github.hojjatabdollahi.glowberry
+StartupNotify=true
+NoDisplay=true

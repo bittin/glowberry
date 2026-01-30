@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=GlowBerry Settings
+Comment=Configure GlowBerry wallpapers and live shaders
+Exec=glowberry-settings
+Icon=io.github.hojjatabdollahi.glowberry-settings
+Type=Application
+Categories=Settings;DesktopSettings;
+Keywords=wallpaper;background;shader;live;animated;settings;
+StartupNotify=true
+Terminal=false

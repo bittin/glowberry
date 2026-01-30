@@ -7,7 +7,7 @@
 //! - `iTime` - elapsed time for animation
 //! - Optional background texture sampling
 
-use cosmic_bg_config::{ShaderContent, ShaderLanguage, ShaderSource};
+use glowberry_config::{ShaderContent, ShaderLanguage, ShaderSource};
 use image::DynamicImage;
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -16,14 +16,14 @@ use crate::gpu::GpuRenderer;
 
 /// WGSL preamble prepended to user shaders.
 const WGSL_PREAMBLE: &str = r#"
-// cosmic-bg live wallpaper uniforms
+// GlowBerry live wallpaper uniforms
 @group(0) @binding(0) var<uniform> iResolution: vec2f;
 @group(0) @binding(1) var<uniform> iTime: f32;
 "#;
 
 /// WGSL preamble with texture support.
 const WGSL_PREAMBLE_WITH_TEXTURE: &str = r#"
-// cosmic-bg live wallpaper uniforms
+// GlowBerry live wallpaper uniforms
 @group(0) @binding(0) var<uniform> iResolution: vec2f;
 @group(0) @binding(1) var<uniform> iTime: f32;
 @group(0) @binding(2) var iTexture: texture_2d<f32>;
@@ -175,14 +175,14 @@ impl FragmentCanvas {
 
         // Create uniform buffers
         let resolution_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cosmic-bg: iResolution buffer"),
+            label: Some("glowberry: iResolution buffer"),
             size: std::mem::size_of::<[f32; 2]>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let time_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cosmic-bg: iTime buffer"),
+            label: Some("glowberry: iTime buffer"),
             size: std::mem::size_of::<f32>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -191,7 +191,7 @@ impl FragmentCanvas {
         // Create bind group layout
         let bind_group_layout = if has_texture {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("cosmic-bg: bind group layout (with texture)"),
+                label: Some("glowberry: bind group layout (with texture)"),
                 entries: &[
                     // iResolution
                     wgpu::BindGroupLayoutEntry {
@@ -237,7 +237,7 @@ impl FragmentCanvas {
             })
         } else {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("cosmic-bg: bind group layout"),
+                label: Some("glowberry: bind group layout"),
                 entries: &[
                     // iResolution
                     wgpu::BindGroupLayoutEntry {
@@ -276,7 +276,7 @@ impl FragmentCanvas {
             });
 
             device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("cosmic-bg: bind group (with texture)"),
+                label: Some("glowberry: bind group (with texture)"),
                 layout: &bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -299,7 +299,7 @@ impl FragmentCanvas {
             })
         } else {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("cosmic-bg: bind group"),
+                label: Some("glowberry: bind group"),
                 layout: &bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -316,14 +316,14 @@ impl FragmentCanvas {
 
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("cosmic-bg: pipeline layout"),
+            label: Some("glowberry: pipeline layout"),
             bind_group_layouts: &[&bind_group_layout],
             ..Default::default()
         });
 
         // Create vertex shader module
         let vertex_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cosmic-bg: vertex shader"),
+            label: Some("glowberry: vertex shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(VERTEX_SHADER)),
         });
 
@@ -337,13 +337,13 @@ impl FragmentCanvas {
         let full_shader = build_shader_source(language, preamble, &shader_code)?;
 
         let fragment_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cosmic-bg: fragment shader"),
+            label: Some("glowberry: fragment shader"),
             source: full_shader,
         });
 
         // Create render pipeline
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("cosmic-bg: render pipeline"),
+            label: Some("glowberry: render pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &vertex_module,
@@ -403,7 +403,7 @@ impl FragmentCanvas {
         };
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("cosmic-bg: background texture"),
+            label: Some("glowberry: background texture"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -462,13 +462,13 @@ impl FragmentCanvas {
 
         // Create command encoder
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("cosmic-bg: render encoder"),
+            label: Some("glowberry: render encoder"),
         });
 
         // Begin render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("cosmic-bg: render pass"),
+                label: Some("glowberry: render pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     resolve_target: None,
@@ -494,7 +494,7 @@ impl FragmentCanvas {
 
 #[cfg(test)]
 mod tests {
-    use cosmic_bg_config::{ShaderContent, ShaderLanguage, ShaderSource};
+    use glowberry_config::{ShaderContent, ShaderLanguage, ShaderSource};
 
     #[test]
     fn detects_glsl_language_for_frag_extension() {

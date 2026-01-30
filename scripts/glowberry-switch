@@ -1,0 +1,164 @@
+#!/bin/bash
+#
+# glowberry-switch - Helper script to switch between GlowBerry and official cosmic-bg
+#
+# Usage: glowberry-switch {glowberry|cosmic-bg|status|import|export}
+#
+
+set -e
+
+GLOWBERRY_BIN="/usr/bin/glowberry"
+COSMIC_BG_ORIG="/usr/bin/cosmic-bg-original"
+
+# Try alternate location for original cosmic-bg
+if [ ! -f "$COSMIC_BG_ORIG" ]; then
+    COSMIC_BG_ORIG="/usr/bin/cosmic-bg.real"
+fi
+
+usage() {
+    cat <<EOF
+Usage: glowberry-switch <command>
+
+Commands:
+    glowberry, enable     Switch to GlowBerry as the active background service
+    cosmic-bg, disable    Switch to the original cosmic-bg
+    status                Show current active background service
+    import                Import configuration from cosmic-bg to GlowBerry
+    export                Export GlowBerry configuration to cosmic-bg format
+    help                  Show this help message
+
+Examples:
+    glowberry-switch glowberry    # Enable GlowBerry
+    glowberry-switch cosmic-bg    # Switch back to original
+    glowberry-switch status       # Check current status
+    glowberry-switch import       # Import cosmic-bg settings
+EOF
+}
+
+check_alternatives() {
+    if ! command -v update-alternatives &> /dev/null; then
+        echo "Warning: update-alternatives not found, using direct symlinks"
+        return 1
+    fi
+    return 0
+}
+
+switch_to_glowberry() {
+    if ! [ -f "$GLOWBERRY_BIN" ]; then
+        echo "Error: GlowBerry not found at $GLOWBERRY_BIN"
+        echo "Please install GlowBerry first with: just install"
+        exit 1
+    fi
+
+    if check_alternatives; then
+        sudo update-alternatives --set cosmic-bg "$GLOWBERRY_BIN"
+    else
+        sudo ln -sf "$GLOWBERRY_BIN" /usr/bin/cosmic-bg
+    fi
+    
+    echo "✓ GlowBerry is now the active background service"
+    echo ""
+    echo "To apply changes, restart your COSMIC session or run:"
+    echo "  systemctl --user restart cosmic-bg 2>/dev/null || cosmic-bg &"
+}
+
+switch_to_cosmic_bg() {
+    if ! [ -f "$COSMIC_BG_ORIG" ]; then
+        echo "Error: Original cosmic-bg not found"
+        echo "Looked in: /usr/bin/cosmic-bg-original, /usr/bin/cosmic-bg.real"
+        echo ""
+        echo "If you haven't saved the original cosmic-bg binary, you may need to"
+        echo "reinstall the cosmic-bg package from your distribution."
+        exit 1
+    fi
+
+    if check_alternatives; then
+        sudo update-alternatives --set cosmic-bg "$COSMIC_BG_ORIG"
+    else
+        sudo ln -sf "$COSMIC_BG_ORIG" /usr/bin/cosmic-bg
+    fi
+    
+    echo "✓ Original cosmic-bg is now the active background service"
+    echo ""
+    echo "To apply changes, restart your COSMIC session or run:"
+    echo "  systemctl --user restart cosmic-bg 2>/dev/null || cosmic-bg &"
+}
+
+show_status() {
+    echo "Background Service Status"
+    echo "========================="
+    echo ""
+    
+    if check_alternatives 2>/dev/null; then
+        echo "Using update-alternatives system:"
+        update-alternatives --display cosmic-bg 2>/dev/null || echo "  No alternatives configured"
+    else
+        if [ -L /usr/bin/cosmic-bg ]; then
+            TARGET=$(readlink -f /usr/bin/cosmic-bg)
+            echo "Current cosmic-bg points to: $TARGET"
+            
+            if [ "$TARGET" = "$GLOWBERRY_BIN" ]; then
+                echo "Status: GlowBerry is active"
+            else
+                echo "Status: Original cosmic-bg is active"
+            fi
+        else
+            echo "cosmic-bg is a regular binary (not managed by alternatives)"
+        fi
+    fi
+    
+    echo ""
+    echo "GlowBerry binary: $([ -f "$GLOWBERRY_BIN" ] && echo "installed" || echo "not found")"
+    echo "Original cosmic-bg: $([ -f "$COSMIC_BG_ORIG" ] && echo "found" || echo "not found")"
+}
+
+import_config() {
+    if ! [ -f "$GLOWBERRY_BIN" ]; then
+        echo "Error: GlowBerry not installed"
+        exit 1
+    fi
+    
+    echo "Importing configuration from cosmic-bg..."
+    "$GLOWBERRY_BIN" --import-cosmic-bg
+}
+
+export_config() {
+    if ! [ -f "$GLOWBERRY_BIN" ]; then
+        echo "Error: GlowBerry not installed"
+        exit 1
+    fi
+    
+    echo "Exporting configuration to cosmic-bg format..."
+    "$GLOWBERRY_BIN" --export-cosmic-bg
+}
+
+case "${1:-}" in
+    glowberry|enable)
+        switch_to_glowberry
+        ;;
+    cosmic-bg|disable|original)
+        switch_to_cosmic_bg
+        ;;
+    status)
+        show_status
+        ;;
+    import)
+        import_config
+        ;;
+    export)
+        export_config
+        ;;
+    help|--help|-h)
+        usage
+        ;;
+    "")
+        usage
+        exit 1
+        ;;
+    *)
+        echo "Unknown command: $1"
+        echo ""
+        usage
+        exit 1
+        ;;
+esac
