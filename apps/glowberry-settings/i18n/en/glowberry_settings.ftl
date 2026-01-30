@@ -34,6 +34,11 @@ shader-author = Author
 shader-source = Source
 shader-license = License
 
+# Shader details
+show-details = Show Details
+hide-details = Hide Details
+reset-to-defaults = Reset to Defaults
+
 # Settings drawer
 settings = Settings
 background-service = Background Service

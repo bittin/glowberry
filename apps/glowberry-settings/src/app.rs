@@ -82,6 +82,9 @@ pub struct GlowBerrySettings {
 
     /// Current shader parameter values (shader_index -> param_name -> value)
     shader_param_values: HashMap<usize, HashMap<String, ParamValue>>,
+    
+    /// Whether shader details section is expanded
+    shader_details_expanded: bool,
 }
 
 /// Information about an available shader
@@ -159,6 +162,10 @@ pub enum Message {
     SetGlowBerryDefaultResult(Result<bool, String>),
     /// Shader parameter changed (shader_index, param_name, value)
     ShaderParamChanged(usize, String, ParamValue),
+    /// Toggle shader details section
+    ToggleShaderDetails,
+    /// Reset shader parameters to defaults
+    ResetShaderParams(usize),
 }
 
 /// Default colors available in the color picker
@@ -281,6 +288,7 @@ impl cosmic::Application for GlowBerrySettings {
             prefer_low_power: true, // Will be set below
             glowberry_is_default: is_glowberry_default(),
             shader_param_values: HashMap::new(),
+            shader_details_expanded: false,
         };
         
         // Load prefer_low_power from config
@@ -538,6 +546,22 @@ impl cosmic::Application for GlowBerrySettings {
                     .insert(param_name, value);
                 
                 // Re-apply the shader with new parameters
+                if let Choice::Shader(idx) = self.selection.active {
+                    if idx == shader_idx {
+                        self.apply_selection();
+                    }
+                }
+            }
+            
+            Message::ToggleShaderDetails => {
+                self.shader_details_expanded = !self.shader_details_expanded;
+            }
+            
+            Message::ResetShaderParams(shader_idx) => {
+                // Remove all custom parameter values for this shader
+                self.shader_param_values.remove(&shader_idx);
+                
+                // Re-apply the shader with default parameters
                 if let Choice::Shader(idx) = self.selection.active {
                     if idx == shader_idx {
                         self.apply_selection();
@@ -903,45 +927,7 @@ impl GlowBerrySettings {
 
         // Frame rate dropdown and shader parameters (only for shaders)
         if let Choice::Shader(shader_idx) = self.selection.active {
-            // Show shader metadata (name, author, source, license)
-            if let Some(shader_info) = self.available_shaders.get(shader_idx) {
-                if let Some(parsed) = &shader_info.parsed {
-                    let metadata = &parsed.metadata;
-                    
-                    // Author
-                    if !metadata.author.is_empty() {
-                        list = list.add(settings::item(
-                            fl!("shader-author"),
-                            widget::text(&metadata.author),
-                        ));
-                    }
-                    
-                    // Source (as a clickable link if it looks like a URL)
-                    if !metadata.source.is_empty() {
-                        let source_url = metadata.source.clone();
-                        let source_widget: Element<'_, Message> = if metadata.source.starts_with("http") {
-                            widget::button::link(source_url.clone())
-                                .on_press(Message::OpenUrl(source_url))
-                                .into()
-                        } else {
-                            widget::text(&metadata.source).into()
-                        };
-                        list = list.add(settings::item(
-                            fl!("shader-source"),
-                            source_widget,
-                        ));
-                    }
-                    
-                    // License
-                    if !metadata.license.is_empty() {
-                        list = list.add(settings::item(
-                            fl!("shader-license"),
-                            widget::text(&metadata.license),
-                        ));
-                    }
-                }
-            }
-            
+            // Frame rate is always visible
             list = list.add(settings::item(
                 fl!("frame-rate"),
                 dropdown(
@@ -951,76 +937,131 @@ impl GlowBerrySettings {
                 ),
             ));
 
-            // Add shader-specific parameters
-            if let Some(shader_info) = self.available_shaders.get(shader_idx) {
-                if let Some(parsed) = &shader_info.parsed {
-                    for param in &parsed.params {
-                        let current_values = self.shader_param_values.get(&shader_idx);
-                        let current = current_values
-                            .and_then(|v| v.get(&param.name))
-                            .copied()
-                            .unwrap_or(param.default);
+            // Show Details button
+            let details_label = if self.shader_details_expanded {
+                fl!("hide-details")
+            } else {
+                fl!("show-details")
+            };
+            
+            list = list.add(
+                widget::button::standard(details_label)
+                    .on_press(Message::ToggleShaderDetails)
+            );
 
-                        let param_name = param.name.clone();
-                        let idx = shader_idx;
+            // Collapsible details section
+            if self.shader_details_expanded {
+                if let Some(shader_info) = self.available_shaders.get(shader_idx) {
+                    if let Some(parsed) = &shader_info.parsed {
+                        let metadata = &parsed.metadata;
+                        
+                        // Author
+                        if !metadata.author.is_empty() {
+                            list = list.add(settings::item(
+                                fl!("shader-author"),
+                                widget::text(&metadata.author),
+                            ));
+                        }
+                        
+                        // Source (as a clickable link if it looks like a URL)
+                        if !metadata.source.is_empty() {
+                            let source_url = metadata.source.clone();
+                            let source_widget: Element<'_, Message> = if metadata.source.starts_with("http") {
+                                widget::button::link(source_url.clone())
+                                    .on_press(Message::OpenUrl(source_url))
+                                    .into()
+                            } else {
+                                widget::text(&metadata.source).into()
+                            };
+                            list = list.add(settings::item(
+                                fl!("shader-source"),
+                                source_widget,
+                            ));
+                        }
+                        
+                        // License
+                        if !metadata.license.is_empty() {
+                            list = list.add(settings::item(
+                                fl!("shader-license"),
+                                widget::text(&metadata.license),
+                            ));
+                        }
+                        
+                        // Shader parameters
+                        for param in &parsed.params {
+                            let current_values = self.shader_param_values.get(&shader_idx);
+                            let current = current_values
+                                .and_then(|v| v.get(&param.name))
+                                .copied()
+                                .unwrap_or(param.default);
 
-                        match param.param_type {
-                            ParamType::F32 => {
-                                let min = param.min.as_f32();
-                                let max = param.max.as_f32();
-                                let step = param.step.as_f32();
-                                let value = current.as_f32();
+                            let param_name = param.name.clone();
+                            let idx = shader_idx;
 
-                                list = list.add(settings::item(
-                                    &param.label,
-                                    widget::row::with_children(vec![
-                                        slider(min..=max, value, move |v| {
-                                            Message::ShaderParamChanged(
-                                                idx,
-                                                param_name.clone(),
-                                                ParamValue::F32(v),
-                                            )
-                                        })
-                                        .step(step)
-                                        .width(Length::Fixed(150.0))
-                                        .into(),
-                                        widget::text(format!("{:.2}", value))
-                                            .width(Length::Fixed(50.0))
+                            match param.param_type {
+                                ParamType::F32 => {
+                                    let min = param.min.as_f32();
+                                    let max = param.max.as_f32();
+                                    let step = param.step.as_f32();
+                                    let value = current.as_f32();
+
+                                    list = list.add(settings::item(
+                                        &param.label,
+                                        widget::row::with_children(vec![
+                                            slider(min..=max, value, move |v| {
+                                                Message::ShaderParamChanged(
+                                                    idx,
+                                                    param_name.clone(),
+                                                    ParamValue::F32(v),
+                                                )
+                                            })
+                                            .step(step)
+                                            .width(Length::Fixed(150.0))
                                             .into(),
-                                    ])
-                                    .spacing(8)
-                                    .align_y(Alignment::Center),
-                                ));
-                            }
-                            ParamType::I32 => {
-                                let min = param.min.as_i32() as f32;
-                                let max = param.max.as_i32() as f32;
-                                let step = param.step.as_i32() as f32;
-                                let value = current.as_i32() as f32;
+                                            widget::text(format!("{:.2}", value))
+                                                .width(Length::Fixed(50.0))
+                                                .into(),
+                                        ])
+                                        .spacing(8)
+                                        .align_y(Alignment::Center),
+                                    ));
+                                }
+                                ParamType::I32 => {
+                                    let min = param.min.as_i32() as f32;
+                                    let max = param.max.as_i32() as f32;
+                                    let step = param.step.as_i32() as f32;
+                                    let value = current.as_i32() as f32;
 
-                                let param_name_clone = param_name.clone();
-                                list = list.add(settings::item(
-                                    &param.label,
-                                    widget::row::with_children(vec![
-                                        slider(min..=max, value, move |v| {
-                                            Message::ShaderParamChanged(
-                                                idx,
-                                                param_name_clone.clone(),
-                                                ParamValue::I32(v as i32),
-                                            )
-                                        })
-                                        .step(step)
-                                        .width(Length::Fixed(150.0))
-                                        .into(),
-                                        widget::text(format!("{}", current.as_i32()))
-                                            .width(Length::Fixed(50.0))
+                                    let param_name_clone = param_name.clone();
+                                    list = list.add(settings::item(
+                                        &param.label,
+                                        widget::row::with_children(vec![
+                                            slider(min..=max, value, move |v| {
+                                                Message::ShaderParamChanged(
+                                                    idx,
+                                                    param_name_clone.clone(),
+                                                    ParamValue::I32(v as i32),
+                                                )
+                                            })
+                                            .step(step)
+                                            .width(Length::Fixed(150.0))
                                             .into(),
-                                    ])
-                                    .spacing(8)
-                                    .align_y(Alignment::Center),
-                                ));
+                                            widget::text(format!("{}", current.as_i32()))
+                                                .width(Length::Fixed(50.0))
+                                                .into(),
+                                        ])
+                                        .spacing(8)
+                                        .align_y(Alignment::Center),
+                                    ));
+                                }
                             }
                         }
+                        
+                        // Reset to defaults button
+                        list = list.add(
+                            widget::button::destructive(fl!("reset-to-defaults"))
+                                .on_press(Message::ResetShaderParams(shader_idx))
+                        );
                     }
                 }
             }
