@@ -75,22 +75,21 @@ fn export_to_cosmic_bg() -> color_eyre::Result<()> {
 }
 
 fn init_logger() {
+    use tracing_subscriber::fmt::time::ChronoLocal;
+
     let log_level = std::env::var("RUST_LOG")
         .ok()
         .and_then(|level| level.parse::<tracing::Level>().ok())
         .unwrap_or(tracing::Level::INFO);
 
-    let log_format = tracing_subscriber::fmt::format()
-        .pretty()
-        .without_time()
-        .with_line_number(true)
-        .with_file(true)
-        .with_target(false)
-        .with_thread_names(true);
-
     let log_filter = tracing_subscriber::fmt::Layer::default()
         .with_writer(std::io::stderr)
-        .event_format(log_format)
+        .with_ansi(true)
+        .with_timer(ChronoLocal::new("%H:%M:%S%.3f".to_string()))
+        .with_level(true)
+        .with_target(true)
+        .with_file(true)
+        .with_line_number(true)
         .with_filter(tracing_subscriber::filter::filter_fn(move |metadata| {
             metadata.level() == &tracing::Level::ERROR
                 || (metadata.target().starts_with("glowberry") && metadata.level() <= &log_level)
