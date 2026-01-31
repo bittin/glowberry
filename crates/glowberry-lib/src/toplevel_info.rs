@@ -35,6 +35,12 @@ pub struct ToplevelData {
     pending_output_ids: HashSet<u32>,
     /// Output Wayland object IDs this toplevel is visible on (committed).
     output_ids: HashSet<u32>,
+    /// Workspace Wayland object IDs this toplevel is on (pending).
+    /// We store the raw object ID (u32) to handle both deprecated ZcosmicWorkspaceHandleV1
+    /// and newer ExtWorkspaceHandleV1.
+    pending_workspace_ids: HashSet<u32>,
+    /// Workspace Wayland object IDs this toplevel is on (committed).
+    workspace_ids: HashSet<u32>,
 }
 
 /// Tracks toplevel windows for fullscreen detection.
@@ -189,6 +195,42 @@ impl ToplevelTracker {
             .collect()
     }
 
+    /// Check if any fullscreen window on the given output is on one of the active workspaces.
+    ///
+    /// This combines fullscreen detection with workspace awareness - a fullscreen window
+    /// only "counts" if it's on a workspace that is currently active on that output.
+    ///
+    /// `active_workspace_ids` should contain the IDs of workspaces that are currently active
+    /// on the output being checked.
+    pub fn has_active_fullscreen_on_output_id(
+        &self,
+        output_id: u32,
+        active_workspace_ids: &HashSet<u32>,
+    ) -> bool {
+        // If we have no active workspace info, don't pause (can't determine)
+        if active_workspace_ids.is_empty() {
+            return false;
+        }
+
+        self.toplevels.iter().any(|(_, data)| {
+            let is_fullscreen = data.state.contains(&State::Fullscreen);
+            let on_output = data.output_ids.contains(&output_id);
+
+            // If toplevel has no workspace info, assume NOT on active workspace
+            if data.workspace_ids.is_empty() {
+                return false;
+            }
+
+            // Check if the toplevel is on any of the active workspaces
+            let on_active_workspace = data
+                .workspace_ids
+                .iter()
+                .any(|ws_id| active_workspace_ids.contains(ws_id));
+
+            is_fullscreen && on_output && on_active_workspace
+        })
+    }
+
     /// Get the number of tracked toplevels (for debugging).
     #[allow(dead_code)]
     pub fn toplevel_count(&self) -> usize {
@@ -197,14 +239,14 @@ impl ToplevelTracker {
 
     /// Internal: add new toplevel
     pub(crate) fn add_toplevel(&mut self, handle: ZcosmicToplevelHandleV1) {
-        tracing::debug!(?handle, "New toplevel added");
+        tracing::trace!(?handle, "New toplevel added");
         self.toplevels.push((handle, ToplevelData::default()));
     }
 
     /// Internal: remove toplevel
     pub(crate) fn remove_toplevel(&mut self, handle: &ZcosmicToplevelHandleV1) {
         if let Some(idx) = self.toplevels.iter().position(|(h, _)| h == handle) {
-            tracing::debug!(?handle, "Toplevel removed");
+            tracing::trace!(?handle, "Toplevel removed");
             self.toplevels.remove(idx);
         }
     }
@@ -249,20 +291,46 @@ impl ToplevelTracker {
         }
     }
 
+    /// Internal: add workspace to pending workspaces (by raw object ID)
+    pub(crate) fn add_pending_workspace(
+        &mut self,
+        handle: &ZcosmicToplevelHandleV1,
+        workspace_id: u32,
+    ) {
+        if let Some(data) = self.get_data_mut(handle) {
+            data.pending_workspace_ids.insert(workspace_id);
+        }
+    }
+
+    /// Internal: remove workspace from pending workspaces (by raw object ID)
+    pub(crate) fn remove_pending_workspace(
+        &mut self,
+        handle: &ZcosmicToplevelHandleV1,
+        workspace_id: u32,
+    ) {
+        if let Some(data) = self.get_data_mut(handle) {
+            data.pending_workspace_ids.remove(&workspace_id);
+        }
+    }
+
     /// Internal: commit pending state (called on Done event)
     /// Returns true if the fullscreen state changed for any output.
     pub(crate) fn commit_toplevel(&mut self, handle: &ZcosmicToplevelHandleV1) -> bool {
         if let Some(data) = self.get_data_mut(handle) {
             let was_fullscreen = data.state.contains(&State::Fullscreen);
             let old_output_ids = data.output_ids.clone();
+            let old_workspace_ids = data.workspace_ids.clone();
 
             data.state = data.pending_state.clone();
             data.output_ids = data.pending_output_ids.clone();
+            data.workspace_ids = data.pending_workspace_ids.clone();
 
             let is_fullscreen = data.state.contains(&State::Fullscreen);
 
-            // Check if fullscreen state or outputs changed
-            let changed = was_fullscreen != is_fullscreen || old_output_ids != data.output_ids;
+            // Check if fullscreen state, outputs, or workspaces changed
+            let changed = was_fullscreen != is_fullscreen
+                || old_output_ids != data.output_ids
+                || old_workspace_ids != data.workspace_ids;
 
             if changed {
                 tracing::debug!(
@@ -270,6 +338,7 @@ impl ToplevelTracker {
                     was_fullscreen,
                     is_fullscreen,
                     output_ids = ?data.output_ids,
+                    workspace_ids = ?data.workspace_ids,
                     "Toplevel fullscreen state changed"
                 );
             }

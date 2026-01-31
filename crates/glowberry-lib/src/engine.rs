@@ -6,6 +6,7 @@ use crate::{
     upower::{start_power_monitor, PowerMonitorHandle, PowerStateChanged},
     user_context::{EnvGuard, UserContext},
     wallpaper::Wallpaper,
+    workspace_info::{AsWorkspaceTracker, WorkspaceTracker},
 };
 use cosmic_config::{calloop::ConfigWatchSource, CosmicConfigEntry};
 use cosmic_protocols::toplevel_info::v1::client::{
@@ -38,6 +39,11 @@ use sctk::{
             ext::foreign_toplevel_list::v1::client::{
                 ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
                 ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1,
+            },
+            ext::workspace::v1::client::{
+                ext_workspace_group_handle_v1::ExtWorkspaceGroupHandleV1,
+                ext_workspace_handle_v1::ExtWorkspaceHandleV1,
+                ext_workspace_manager_v1::ExtWorkspaceManagerV1,
             },
             wp::{
                 fractional_scale::v1::client::{
@@ -306,6 +312,16 @@ impl BackgroundEngine {
             );
         }
 
+        // Initialize workspace tracker for active workspace detection
+        let workspace_tracker = WorkspaceTracker::try_new(&globals, &qh);
+        if workspace_tracker.is_some() {
+            tracing::info!("Workspace tracking enabled via ext_workspace_manager_v1");
+        } else {
+            tracing::warn!(
+                "Workspace tracking unavailable - ext_workspace_manager_v1 protocol not supported"
+            );
+        }
+
         let source_tx = img_source::img_source(&event_loop.handle(), |state, source, event| {
             use notify::event::{ModifyKind, RenameMode};
 
@@ -407,6 +423,7 @@ impl BackgroundEngine {
             current_frame_rate_override: None,
             was_on_battery: false,
             toplevel_tracker,
+            workspace_tracker,
         };
 
         loop {
@@ -503,6 +520,8 @@ pub struct CosmicBg {
     was_on_battery: bool,
     /// Toplevel tracker for fullscreen detection (None if protocol unavailable).
     toplevel_tracker: Option<ToplevelTracker>,
+    /// Workspace tracker for active workspace detection (None if protocol unavailable).
+    workspace_tracker: Option<WorkspaceTracker>,
 }
 
 // Manual Debug impl since wgpu types don't implement Debug
@@ -563,7 +582,16 @@ impl CosmicBg {
                 // Extract the raw object ID number from the WlOutput
                 // The object ID format is "wl_output@N" where N is the number we need
                 let output_id = output.id().protocol_id();
-                if tracker.has_fullscreen_on_output_id(output_id) {
+
+                // Get active workspace IDs for this output (empty if workspace tracking unavailable)
+                let active_workspace_ids = self
+                    .workspace_tracker
+                    .as_ref()
+                    .map(|wt| wt.get_active_workspace_ids_for_output(output_id))
+                    .unwrap_or_default();
+
+                // Check if there's a fullscreen window on an active workspace on this output
+                if tracker.has_active_fullscreen_on_output_id(output_id, &active_workspace_ids) {
                     return Some(PauseReason::FullscreenApp);
                 }
             }
@@ -1528,6 +1556,24 @@ impl AsToplevelTracker for CosmicBg {
     }
 }
 
+// Implement AsWorkspaceTracker for CosmicBg to enable workspace-aware fullscreen detection
+impl AsWorkspaceTracker for CosmicBg {
+    fn as_workspace_tracker(&self) -> Option<&WorkspaceTracker> {
+        self.workspace_tracker.as_ref()
+    }
+
+    fn as_workspace_tracker_mut(&mut self) -> Option<&mut WorkspaceTracker> {
+        self.workspace_tracker.as_mut()
+    }
+
+    fn on_workspace_active_changed(&mut self) {
+        // A workspace's active state changed - this may affect which outputs have
+        // "active" fullscreen windows. Re-evaluate fullscreen state.
+        tracing::trace!("Workspace active state changed, re-evaluating fullscreen state");
+        self.request_frame_callbacks_if_needed();
+    }
+}
+
 // Dispatch implementation for ZcosmicToplevelInfoV1
 // Delegates to ToplevelTracker which handles new toplevel creation
 impl Dispatch<ZcosmicToplevelInfoV1, ()> for CosmicBg {
@@ -1542,7 +1588,7 @@ impl Dispatch<ZcosmicToplevelInfoV1, ()> for CosmicBg {
         use cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_info_v1::Event;
         match event {
             Event::Toplevel { toplevel } => {
-                tracing::debug!(?toplevel, "New toplevel announced");
+                tracing::trace!(?toplevel, "New toplevel announced");
                 // The toplevel handle will receive its own events via ZcosmicToplevelHandleV1 dispatch
             }
             Event::Done => {
@@ -1551,7 +1597,7 @@ impl Dispatch<ZcosmicToplevelInfoV1, ()> for CosmicBg {
                     .as_ref()
                     .map(|t| t.toplevels.len())
                     .unwrap_or(0);
-                tracing::debug!(toplevel_count = count, "Received initial toplevel list");
+                tracing::trace!(toplevel_count = count, "Received initial toplevel list");
             }
             Event::Finished => {
                 tracing::info!("Toplevel info protocol finished");
@@ -1586,25 +1632,25 @@ impl Dispatch<ZcosmicToplevelHandleV1, ()> for CosmicBg {
 
         // Ensure toplevel exists in our list
         if !tracker.toplevels.iter().any(|(h, _)| h == handle) {
-            tracing::debug!(?handle, "Adding new toplevel to tracker");
+            tracing::trace!(?handle, "Adding new toplevel to tracker");
             tracker.add_toplevel(handle.clone());
         }
 
         match event {
             Event::AppId { ref app_id } => {
-                tracing::debug!(?handle, app_id, "Toplevel app_id");
+                tracing::trace!(?handle, app_id, "Toplevel app_id");
             }
             Event::Title { ref title } => {
-                tracing::debug!(?handle, title, "Toplevel title");
+                tracing::trace!(?handle, title, "Toplevel title");
             }
             Event::OutputEnter { ref output } => {
                 let output_id = output.id().protocol_id();
-                tracing::debug!(?handle, output_id, "Toplevel entered output");
+                tracing::trace!(?handle, output_id, "Toplevel entered output");
                 tracker.add_pending_output(handle, output_id);
             }
             Event::OutputLeave { ref output } => {
                 let output_id = output.id().protocol_id();
-                tracing::debug!(?handle, output_id, "Toplevel left output");
+                tracing::trace!(?handle, output_id, "Toplevel left output");
                 tracker.remove_pending_output(handle, output_id);
             }
             Event::State {
@@ -1623,12 +1669,12 @@ impl Dispatch<ZcosmicToplevelHandleV1, ()> for CosmicBg {
                     }
                 }
                 let is_fullscreen = states.contains(&State::Fullscreen);
-                tracing::debug!(?handle, ?states, is_fullscreen, "Toplevel state update");
+                tracing::trace!(?handle, ?states, is_fullscreen, "Toplevel state update");
                 tracker.set_pending_state(handle, states);
             }
             Event::Done => {
                 let changed = tracker.commit_toplevel(handle);
-                tracing::debug!(?handle, changed, "Toplevel done event");
+                tracing::trace!(?handle, changed, "Toplevel done event");
                 if changed {
                     // Notify that fullscreen state may have changed
                     state.on_toplevel_fullscreen_changed();
@@ -1644,18 +1690,44 @@ impl Dispatch<ZcosmicToplevelHandleV1, ()> for CosmicBg {
                     .map(|(_, data)| data.state.contains(&State::Fullscreen))
                     .unwrap_or(false);
 
-                tracing::debug!(?handle, had_fullscreen, "Toplevel closed");
+                tracing::trace!(?handle, had_fullscreen, "Toplevel closed");
                 tracker.remove_toplevel(handle);
 
                 if had_fullscreen {
                     state.on_toplevel_fullscreen_changed();
                 }
             }
-            Event::WorkspaceEnter { workspace: _ } => {
-                // TODO: Track workspace for more precise fullscreen detection
+            Event::WorkspaceEnter { ref workspace } => {
+                // Track workspace for this toplevel (deprecated API, use protocol ID)
+                let workspace_id = workspace.id().protocol_id();
+                tracing::debug!(
+                    ?handle,
+                    workspace_id,
+                    "Toplevel entered workspace (deprecated)"
+                );
+                tracker.add_pending_workspace(handle, workspace_id);
             }
-            Event::WorkspaceLeave { workspace: _ } => {
-                // TODO: Track workspace for more precise fullscreen detection
+            Event::WorkspaceLeave { ref workspace } => {
+                // Track workspace for this toplevel (deprecated API, use protocol ID)
+                let workspace_id = workspace.id().protocol_id();
+                tracing::debug!(
+                    ?handle,
+                    workspace_id,
+                    "Toplevel left workspace (deprecated)"
+                );
+                tracker.remove_pending_workspace(handle, workspace_id);
+            }
+            Event::ExtWorkspaceEnter { ref workspace } => {
+                // Track workspace for this toplevel (v3+ API)
+                let workspace_id = workspace.id().protocol_id();
+                tracing::trace!(?handle, workspace_id, "Toplevel entered workspace");
+                tracker.add_pending_workspace(handle, workspace_id);
+            }
+            Event::ExtWorkspaceLeave { ref workspace } => {
+                // Track workspace for this toplevel (v3+ API)
+                let workspace_id = workspace.id().protocol_id();
+                tracing::trace!(?handle, workspace_id, "Toplevel left workspace");
+                tracker.remove_pending_workspace(handle, workspace_id);
             }
             _ => {}
         }
@@ -1677,7 +1749,7 @@ impl Dispatch<ExtForeignToplevelListV1, ()> for CosmicBg {
 
         match event {
             Event::Toplevel { toplevel } => {
-                tracing::debug!(?toplevel, "Foreign toplevel announced");
+                tracing::trace!(?toplevel, "Foreign toplevel announced");
                 // For each foreign toplevel, request a cosmic toplevel handle
                 if let Some(ref tracker) = state.toplevel_tracker {
                     let cosmic_handle = tracker.toplevel_info().get_cosmic_toplevel(
@@ -1719,7 +1791,7 @@ impl Dispatch<ExtForeignToplevelHandleV1, ()> for CosmicBg {
 
         match event {
             Event::Closed => {
-                tracing::debug!(?handle, "Foreign toplevel closed");
+                tracing::trace!(?handle, "Foreign toplevel closed");
                 if let Some(ref mut tracker) = state.toplevel_tracker {
                     tracker.remove_foreign_toplevel(handle);
                 }
@@ -1786,12 +1858,12 @@ impl Dispatch<ZcosmicToplevelHandleV1, ExtForeignToplevelHandleV1> for CosmicBg 
         match event {
             Event::OutputEnter { ref output } => {
                 let output_id = output.id().protocol_id();
-                tracing::debug!(?handle, output_id, "Toplevel entered output");
+                tracing::trace!(?handle, output_id, "Toplevel entered output");
                 tracker.add_pending_output(handle, output_id);
             }
             Event::OutputLeave { ref output } => {
                 let output_id = output.id().protocol_id();
-                tracing::debug!(?handle, output_id, "Toplevel left output");
+                tracing::trace!(?handle, output_id, "Toplevel left output");
                 tracker.remove_pending_output(handle, output_id);
             }
             Event::State {
@@ -1810,15 +1882,161 @@ impl Dispatch<ZcosmicToplevelHandleV1, ExtForeignToplevelHandleV1> for CosmicBg 
                     }
                 }
                 let is_fullscreen = states.contains(&State::Fullscreen);
-                tracing::debug!(?handle, ?states, is_fullscreen, "Toplevel state update");
+                tracing::trace!(?handle, ?states, is_fullscreen, "Toplevel state update");
                 tracker.set_pending_state(handle, states);
             }
             Event::Done => {
                 let changed = tracker.commit_toplevel(handle);
-                tracing::debug!(?handle, changed, "Toplevel done event");
+                tracing::trace!(?handle, changed, "Toplevel done event");
                 if changed {
                     state.on_toplevel_fullscreen_changed();
                 }
+            }
+            _ => {}
+        }
+    }
+}
+
+// Dispatch implementation for ExtWorkspaceManagerV1
+impl Dispatch<ExtWorkspaceManagerV1, ()> for CosmicBg {
+    fn event(
+        state: &mut CosmicBg,
+        _proxy: &ExtWorkspaceManagerV1,
+        event: <ExtWorkspaceManagerV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<CosmicBg>,
+    ) {
+        use sctk::reexports::protocols::ext::workspace::v1::client::ext_workspace_manager_v1::Event;
+
+        match event {
+            Event::WorkspaceGroup { workspace_group } => {
+                tracing::trace!(?workspace_group, "New workspace group announced");
+                if let Some(ref mut tracker) = state.workspace_tracker {
+                    tracker.add_group(workspace_group);
+                }
+            }
+            Event::Done => {
+                // Commit all pending workspace state changes
+                if let Some(ref mut tracker) = state.workspace_tracker {
+                    // Commit all group states
+                    let groups: Vec<_> = tracker.groups.iter().map(|(h, _)| h.clone()).collect();
+                    for group in groups {
+                        tracker.commit_group(&group);
+                    }
+
+                    // Commit all workspace states and check if any changed
+                    let workspaces: Vec<_> = tracker.workspaces.keys().cloned().collect();
+                    let any_changed = workspaces
+                        .iter()
+                        .map(|ws| tracker.commit_workspace(ws))
+                        .any(|changed| changed);
+
+                    if any_changed {
+                        tracing::trace!("Workspace active state changed after manager done");
+                        state.on_workspace_active_changed();
+                    }
+                }
+                tracing::trace!("Workspace manager done event processed");
+            }
+            Event::Finished => {
+                tracing::info!("Workspace manager protocol finished");
+            }
+            Event::Workspace { workspace } => {
+                tracing::trace!(?workspace, "New workspace announced");
+                // Workspace will be added to a group when we receive WorkspaceEnter on that group
+            }
+            _ => {}
+        }
+    }
+
+    // Tell wayland-client how to dispatch events for child objects created by this protocol
+    sctk::reexports::client::event_created_child!(CosmicBg, ExtWorkspaceManagerV1, [
+        // workspace_group event (opcode 0) creates ExtWorkspaceGroupHandleV1
+        0 => (ExtWorkspaceGroupHandleV1, ()),
+        // workspace event (opcode 1) creates ExtWorkspaceHandleV1
+        1 => (ExtWorkspaceHandleV1, ())
+    ]);
+}
+
+// Dispatch implementation for ExtWorkspaceGroupHandleV1
+impl Dispatch<ExtWorkspaceGroupHandleV1, ()> for CosmicBg {
+    fn event(
+        state: &mut CosmicBg,
+        group: &ExtWorkspaceGroupHandleV1,
+        event: <ExtWorkspaceGroupHandleV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<CosmicBg>,
+    ) {
+        use sctk::reexports::protocols::ext::workspace::v1::client::ext_workspace_group_handle_v1::Event;
+
+        let Some(ref mut tracker) = state.workspace_tracker else {
+            return;
+        };
+
+        match event {
+            Event::OutputEnter { output } => {
+                let output_id = output.id().protocol_id();
+                tracing::trace!(?group, output_id, "Workspace group entered output");
+                tracker.add_pending_group_output(group, output_id);
+            }
+            Event::OutputLeave { output } => {
+                let output_id = output.id().protocol_id();
+                tracing::trace!(?group, output_id, "Workspace group left output");
+                tracker.remove_pending_group_output(group, output_id);
+            }
+            Event::WorkspaceEnter { workspace } => {
+                tracing::trace!(?group, ?workspace, "Workspace entered group");
+                tracker.add_workspace_to_group(group, workspace);
+            }
+            Event::WorkspaceLeave { workspace } => {
+                tracing::trace!(?group, ?workspace, "Workspace left group");
+                tracker.remove_workspace_from_group(group, &workspace);
+            }
+            Event::Removed => {
+                tracing::trace!(?group, "Workspace group removed");
+                tracker.remove_group(group);
+            }
+            _ => {}
+        }
+    }
+}
+
+// Dispatch implementation for ExtWorkspaceHandleV1
+impl Dispatch<ExtWorkspaceHandleV1, ()> for CosmicBg {
+    fn event(
+        state: &mut CosmicBg,
+        workspace: &ExtWorkspaceHandleV1,
+        event: <ExtWorkspaceHandleV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<CosmicBg>,
+    ) {
+        use sctk::reexports::protocols::ext::workspace::v1::client::ext_workspace_handle_v1::Event;
+
+        let Some(ref mut tracker) = state.workspace_tracker else {
+            return;
+        };
+
+        match event {
+            Event::State { state: state_bits } => {
+                use sctk::reexports::protocols::ext::workspace::v1::client::ext_workspace_handle_v1::State;
+
+                // The state is a bitfield - check if Active bit is set
+                let is_active = match state_bits {
+                    sctk::reexports::client::WEnum::Value(bits) => bits.contains(State::Active),
+                    sctk::reexports::client::WEnum::Unknown(_) => false,
+                };
+                tracing::trace!(?workspace, is_active, "Workspace state update");
+                tracker.set_workspace_pending_active(workspace, is_active);
+            }
+            Event::Name { ref name } => {
+                tracing::trace!(?workspace, name, "Workspace name");
+            }
+            Event::Removed => {
+                tracing::trace!(?workspace, "Workspace removed");
+                // Workspace removal is handled via group's WorkspaceLeave event
             }
             _ => {}
         }
