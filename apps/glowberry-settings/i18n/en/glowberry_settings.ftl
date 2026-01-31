@@ -52,9 +52,6 @@ prefer-low-power = Prefer low power GPU
 
 # Power saving section
 power-saving = Power Saving
-pause-fullscreen = Pause for fullscreen apps
-pause-covered = Pause when covered by windows
-coverage-threshold = Pause at coverage
 on-battery = On battery power
 action-nothing = Do nothing
 action-pause = Pause animation

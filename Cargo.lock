@@ -1321,7 +1321,7 @@ version = "0.1.0"
 source = "git+https://github.com/pop-os/cosmic-protocols?rev=d0e95be#d0e95be25e423cfe523b11111a3666ed7aaf0dc4"
 dependencies = [
  "bitflags 2.10.0",
- "cosmic-protocols 0.1.0",
+ "cosmic-protocols",
  "libc",
  "smithay-client-toolkit 0.20.0",
  "wayland-client",
@@ -1377,20 +1377,6 @@ dependencies = [
 name = "cosmic-protocols"
 version = "0.1.0"
 source = "git+https://github.com/pop-os/cosmic-protocols?rev=d0e95be#d0e95be25e423cfe523b11111a3666ed7aaf0dc4"
-dependencies = [
- "bitflags 2.10.0",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "wayland-scanner",
- "wayland-server",
-]
-
-[[package]]
-name = "cosmic-protocols"
-version = "0.2.0"
-source = "git+https://github.com/pop-os/cosmic-protocols#160b086abe03cd34a8a375d7fbe47b24308d1f38"
 dependencies = [
  "bitflags 2.10.0",
  "wayland-backend",
@@ -2436,7 +2422,6 @@ dependencies = [
  "calloop 0.14.3",
  "colorgrad",
  "cosmic-config",
- "cosmic-protocols 0.2.0",
  "eyre",
  "fast_image_resize",
  "futures",
@@ -6194,7 +6179,6 @@ version = "0.3.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2054a14f5307d601f88daf0553e1cbf472acc4f2c51afab632431cdcd72124d5"
 dependencies = [
- "chrono",
  "nu-ansi-term",
  "sharded-slab",
  "smallvec",

@@ -90,11 +90,6 @@ pub struct GlowBerrySettings {
     /// Power saving configuration
     power_saving: PowerSavingConfig,
     
-    /// Coverage threshold options for dropdown
-    coverage_threshold_options: Vec<String>,
-    /// Selected coverage threshold index
-    selected_coverage_threshold: usize,
-    
     /// On battery action options for dropdown
     on_battery_action_options: Vec<String>,
     /// Selected on battery action index
@@ -187,12 +182,6 @@ pub enum Message {
     ResetShaderParams(usize),
     
     // Power saving messages
-    /// Toggle pause for fullscreen apps
-    SetPauseOnFullscreen(bool),
-    /// Toggle pause when covered by windows
-    SetPauseOnCovered(bool),
-    /// Change coverage threshold
-    SetCoverageThreshold(usize),
     /// Change on battery action
     SetOnBatteryAction(usize),
     /// Toggle pause on low battery
@@ -325,13 +314,6 @@ impl cosmic::Application for GlowBerrySettings {
             shader_param_values: HashMap::new(),
             shader_details_expanded: false,
             power_saving: PowerSavingConfig::default(),
-            coverage_threshold_options: vec![
-                "50%".to_string(),
-                "90%".to_string(),
-                "99%".to_string(),
-                "100%".to_string(),
-            ],
-            selected_coverage_threshold: 1, // 90% default
             on_battery_action_options: vec![
                 fl!("action-nothing"),
                 fl!("action-pause"),
@@ -355,13 +337,6 @@ impl cosmic::Application for GlowBerrySettings {
             app.power_saving = ctx.power_saving_config();
             
             // Set dropdown indices based on loaded config
-            app.selected_coverage_threshold = match app.power_saving.coverage_threshold {
-                50 => 0,
-                90 => 1,
-                99 => 2,
-                100 => 3,
-                _ => 1, // Default to 90%
-            };
             app.selected_on_battery_action = match app.power_saving.on_battery_action {
                 OnBatteryAction::Nothing => 0,
                 OnBatteryAction::Pause => 1,
@@ -652,35 +627,6 @@ impl cosmic::Application for GlowBerrySettings {
             }
             
             // Power saving messages
-            Message::SetPauseOnFullscreen(value) => {
-                self.power_saving.pause_on_fullscreen = value;
-                if let Some(ctx) = &self.config_context {
-                    let _ = ctx.set_pause_on_fullscreen(value);
-                }
-            }
-            
-            Message::SetPauseOnCovered(value) => {
-                self.power_saving.pause_on_covered = value;
-                if let Some(ctx) = &self.config_context {
-                    let _ = ctx.set_pause_on_covered(value);
-                }
-            }
-            
-            Message::SetCoverageThreshold(idx) => {
-                self.selected_coverage_threshold = idx;
-                let threshold = match idx {
-                    0 => 50,
-                    1 => 90,
-                    2 => 99,
-                    3 => 100,
-                    _ => 90,
-                };
-                self.power_saving.coverage_threshold = threshold;
-                if let Some(ctx) = &self.config_context {
-                    let _ = ctx.set_coverage_threshold(threshold);
-                }
-            }
-            
             Message::SetOnBatteryAction(idx) => {
                 self.selected_on_battery_action = idx;
                 let action = match idx {
@@ -831,43 +777,6 @@ impl GlowBerrySettings {
         // Build power saving section
         let mut power_saving_section = widget::settings::section()
             .title(fl!("power-saving"));
-        
-        // Pause for fullscreen apps
-        power_saving_section = power_saving_section.add(settings::item(
-            fl!("pause-fullscreen"),
-            toggler(self.power_saving.pause_on_fullscreen)
-                .on_toggle(Message::SetPauseOnFullscreen),
-        ));
-        
-        // Pause when covered by windows (with conditional threshold dropdown)
-        {
-            let toggle_row = settings::item(
-                fl!("pause-covered"),
-                toggler(self.power_saving.pause_on_covered)
-                    .on_toggle(Message::SetPauseOnCovered),
-            );
-            
-            if self.power_saving.pause_on_covered {
-                let dropdown_row = settings::item(
-                    fl!("coverage-threshold"),
-                    dropdown(
-                        &self.coverage_threshold_options,
-                        Some(self.selected_coverage_threshold),
-                        Message::SetCoverageThreshold,
-                    ),
-                );
-                
-                power_saving_section = power_saving_section.add(
-                    widget::column::with_children(vec![
-                        toggle_row.into(),
-                        dropdown_row.into(),
-                    ])
-                    .spacing(8)
-                );
-            } else {
-                power_saving_section = power_saving_section.add(toggle_row);
-            }
-        }
         
         // On battery power action
         power_saving_section = power_saving_section.add(settings::item(

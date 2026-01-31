@@ -8,9 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::Context;
 
 // Config keys
-pub const PAUSE_ON_FULLSCREEN: &str = "pause-on-fullscreen";
-pub const PAUSE_ON_COVERED: &str = "pause-on-covered";
-pub const COVERAGE_THRESHOLD: &str = "coverage-threshold";
 pub const ADJUST_ON_BATTERY: &str = "adjust-on-battery";
 pub const ON_BATTERY_ACTION: &str = "on-battery-action";
 pub const PAUSE_ON_LOW_BATTERY: &str = "pause-on-low-battery";
@@ -62,12 +59,6 @@ impl OnBatteryAction {
 /// Power saving configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PowerSavingConfig {
-    /// Pause when any app enters fullscreen mode
-    pub pause_on_fullscreen: bool,
-    /// Pause when wallpaper is covered by windows
-    pub pause_on_covered: bool,
-    /// Coverage percentage threshold to trigger pause (50, 90, 99, 100)
-    pub coverage_threshold: u8,
     /// Adjust animation when on battery power
     pub adjust_on_battery: bool,
     /// What to do when on battery
@@ -83,9 +74,6 @@ pub struct PowerSavingConfig {
 impl Default for PowerSavingConfig {
     fn default() -> Self {
         Self {
-            pause_on_fullscreen: false, // Opt-in (some apps may be transparent)
-            pause_on_covered: false,    // Opt-in (some apps may be transparent)
-            coverage_threshold: 90,
             adjust_on_battery: false, // Opt-in
             on_battery_action: OnBatteryAction::Pause,
             pause_on_low_battery: true, // On by default
@@ -99,9 +87,6 @@ impl PowerSavingConfig {
     /// Load power saving config from cosmic-config.
     pub fn load(context: &Context) -> Self {
         Self {
-            pause_on_fullscreen: context.0.get::<bool>(PAUSE_ON_FULLSCREEN).unwrap_or(false),
-            pause_on_covered: context.0.get::<bool>(PAUSE_ON_COVERED).unwrap_or(false),
-            coverage_threshold: context.0.get::<u8>(COVERAGE_THRESHOLD).unwrap_or(90),
             adjust_on_battery: context.0.get::<bool>(ADJUST_ON_BATTERY).unwrap_or(false),
             on_battery_action: context
                 .0
@@ -115,11 +100,6 @@ impl PowerSavingConfig {
 
     /// Save power saving config to cosmic-config.
     pub fn save(&self, context: &Context) -> Result<(), cosmic_config::Error> {
-        context
-            .0
-            .set(PAUSE_ON_FULLSCREEN, self.pause_on_fullscreen)?;
-        context.0.set(PAUSE_ON_COVERED, self.pause_on_covered)?;
-        context.0.set(COVERAGE_THRESHOLD, self.coverage_threshold)?;
         context.0.set(ADJUST_ON_BATTERY, self.adjust_on_battery)?;
         context.0.set(ON_BATTERY_ACTION, self.on_battery_action)?;
         context
@@ -136,39 +116,6 @@ impl PowerSavingConfig {
 }
 
 impl Context {
-    /// Get the pause on fullscreen setting.
-    #[must_use]
-    pub fn pause_on_fullscreen(&self) -> bool {
-        self.0.get::<bool>(PAUSE_ON_FULLSCREEN).unwrap_or(false)
-    }
-
-    /// Set the pause on fullscreen setting.
-    pub fn set_pause_on_fullscreen(&self, value: bool) -> Result<(), cosmic_config::Error> {
-        self.0.set(PAUSE_ON_FULLSCREEN, value)
-    }
-
-    /// Get the pause on covered setting.
-    #[must_use]
-    pub fn pause_on_covered(&self) -> bool {
-        self.0.get::<bool>(PAUSE_ON_COVERED).unwrap_or(false)
-    }
-
-    /// Set the pause on covered setting.
-    pub fn set_pause_on_covered(&self, value: bool) -> Result<(), cosmic_config::Error> {
-        self.0.set(PAUSE_ON_COVERED, value)
-    }
-
-    /// Get the coverage threshold setting.
-    #[must_use]
-    pub fn coverage_threshold(&self) -> u8 {
-        self.0.get::<u8>(COVERAGE_THRESHOLD).unwrap_or(90)
-    }
-
-    /// Set the coverage threshold setting.
-    pub fn set_coverage_threshold(&self, value: u8) -> Result<(), cosmic_config::Error> {
-        self.0.set(COVERAGE_THRESHOLD, value)
-    }
-
     /// Get the adjust on battery setting.
     #[must_use]
     pub fn adjust_on_battery(&self) -> bool {
