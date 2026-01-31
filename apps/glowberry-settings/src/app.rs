@@ -969,29 +969,37 @@ impl GlowBerrySettings {
                     };
                     
                     // Check if we have custom parameter values for this shader
-                    let shader_content = if let Some(parsed) = &shader.parsed {
+                    let (shader_content, source_path, params) = if let Some(parsed) = &shader.parsed {
                         // Get current parameter values, falling back to defaults
                         let values = self.shader_param_values
                             .get(idx)
                             .cloned()
                             .unwrap_or_default();
                         
+                        // Convert ParamValue HashMap to f64 HashMap for config storage
+                        let params: HashMap<String, f64> = values.iter()
+                            .map(|(k, v)| (k.clone(), v.as_f32() as f64))
+                            .collect();
+                        
                         // Only generate custom source if we have any custom values
                         if values.is_empty() {
                             // No custom params, use path for efficiency
-                            glowberry_config::ShaderContent::Path(shader.path.clone())
+                            (glowberry_config::ShaderContent::Path(shader.path.clone()), None, params)
                         } else {
                             // Generate shader source with parameter values
+                            // Keep source_path so we can identify the shader later
                             let generated_source = parsed.generate_source(&values);
-                            glowberry_config::ShaderContent::Code(generated_source)
+                            (glowberry_config::ShaderContent::Code(generated_source), Some(shader.path.clone()), params)
                         }
                     } else {
                         // No parsed shader, use path
-                        glowberry_config::ShaderContent::Path(shader.path.clone())
+                        (glowberry_config::ShaderContent::Path(shader.path.clone()), None, HashMap::new())
                     };
                     
                     Source::Shader(glowberry_config::ShaderSource {
                         shader: shader_content,
+                        source_path,
+                        params,
                         background_image: None,
                         language: glowberry_config::ShaderLanguage::Wgsl,
                         frame_rate,
@@ -1034,11 +1042,23 @@ impl GlowBerrySettings {
                 self.categories.selected = Some(Category::Colors);
             }
             Source::Shader(shader_source) => {
-                if let glowberry_config::ShaderContent::Path(config_path) = &shader_source.shader {
+                // Determine which path to use for matching:
+                // - If source_path is set (customized shader), use that
+                // - Otherwise use the path from ShaderContent::Path
+                let match_path = shader_source.source_path.as_ref().or_else(|| {
+                    if let glowberry_config::ShaderContent::Path(p) = &shader_source.shader {
+                        Some(p)
+                    } else {
+                        None
+                    }
+                });
+                
+                let mut matched_idx = None;
+                if let Some(config_path) = match_path {
                     // Try exact path match first
-                    let found = if let Some(idx) = self.available_shaders.iter().position(|s| &s.path == config_path) {
+                    if let Some(idx) = self.available_shaders.iter().position(|s| &s.path == config_path) {
                         self.selection.active = Choice::Shader(idx);
-                        true
+                        matched_idx = Some(idx);
                     } else {
                         // Fall back to filename match (in case paths differ due to XDG_DATA_DIRS)
                         if let Some(config_filename) = config_path.file_name() {
@@ -1046,22 +1066,46 @@ impl GlowBerrySettings {
                                 s.path.file_name() == Some(config_filename)
                             }) {
                                 self.selection.active = Choice::Shader(idx);
-                                true
-                            } else {
-                                false
+                                matched_idx = Some(idx);
                             }
-                        } else {
-                            false
                         }
-                    };
+                    }
                     
                     // If no shader found, select the first one if available
-                    if !found && !self.available_shaders.is_empty() {
+                    if matched_idx.is_none() && !self.available_shaders.is_empty() {
                         self.selection.active = Choice::Shader(0);
+                        matched_idx = Some(0);
                     }
                 } else if !self.available_shaders.is_empty() {
-                    // Inline shader content - just select first shader
+                    // Inline shader content with no source_path - just select first shader
                     self.selection.active = Choice::Shader(0);
+                    matched_idx = Some(0);
+                }
+                
+                // Load parameter values from config
+                if let Some(idx) = matched_idx {
+                    if !shader_source.params.is_empty() {
+                        // Convert f64 values back to ParamValue based on shader's param definitions
+                        let mut param_values: HashMap<String, ParamValue> = HashMap::new();
+                        
+                        if let Some(shader_info) = self.available_shaders.get(idx) {
+                            if let Some(parsed) = &shader_info.parsed {
+                                for param in &parsed.params {
+                                    if let Some(&value) = shader_source.params.get(&param.name) {
+                                        let param_value = match param.param_type {
+                                            ParamType::F32 => ParamValue::F32(value as f32),
+                                            ParamType::I32 => ParamValue::I32(value as i32),
+                                        };
+                                        param_values.insert(param.name.clone(), param_value);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if !param_values.is_empty() {
+                            self.shader_param_values.insert(idx, param_values);
+                        }
+                    }
                 }
                 
                 self.selected_shader_frame_rate = match shader_source.frame_rate {

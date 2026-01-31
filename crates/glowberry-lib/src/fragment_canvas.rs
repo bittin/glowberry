@@ -522,6 +522,8 @@ mod tests {
     fn detects_glsl_language_for_frag_extension() {
         let source = ShaderSource {
             shader: ShaderContent::Path("/tmp/test.frag".into()),
+            source_path: None,
+            params: std::collections::HashMap::new(),
             background_image: None,
             language: ShaderLanguage::Wgsl,
             frame_rate: 30,

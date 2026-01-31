@@ -266,6 +266,15 @@ pub enum Source {
 pub struct ShaderSource {
     /// The shader code source (path or inline).
     pub shader: ShaderContent,
+    /// Original shader path (preserved when using customized Code content).
+    /// This allows the UI to identify which shader is selected even when
+    /// parameters have been modified and the code is inlined.
+    #[serde(default)]
+    pub source_path: Option<PathBuf>,
+    /// Custom parameter values for the shader (param_name -> value).
+    /// Values are stored as f64 to accommodate both f32 and i32 parameters.
+    #[serde(default)]
+    pub params: std::collections::HashMap<String, f64>,
     /// Optional background image the shader can sample.
     #[serde(default)]
     pub background_image: Option<PathBuf>,
