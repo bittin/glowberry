@@ -11,8 +11,10 @@ use cosmic::iced_runtime::core::image::Handle as ImageHandle;
 use cosmic::widget::{self, button, container, dropdown, segmented_button, settings, slider, tab_bar, text, toggler};
 use cosmic::{Apply, ApplicationExt, Element};
 use cosmic::iced::{Alignment, Length};
+use cosmic_config::CosmicConfigEntry;
 use glowberry_config::{Color, Config, Context as ConfigContext, Entry, Gradient, Source};
 use glowberry_config::power_saving::{OnBatteryAction, PowerSavingConfig};
+use glowberry_config::state::State;
 use image::{ImageBuffer, Rgba};
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 use std::borrow::Cow;
@@ -178,8 +180,8 @@ pub enum Message {
     OutputChanged(segmented_button::Entity),
     /// Prefer low power GPU toggle
     PreferLowPower(bool),
-    /// Config changed externally (from daemon or another instance)
-    ConfigChanged(Config),
+    /// Config or state changed externally (from daemon or another instance)
+    ConfigOrStateChanged(Option<Config>),
     /// Toggle GlowBerry as the default background service
     SetGlowBerryDefault(bool),
     /// Result of setting GlowBerry as default
@@ -393,29 +395,26 @@ impl cosmic::Application for GlowBerrySettings {
                 .map(Message::WallpaperEvent),
         ];
 
-        // Watch for config changes from other sources (daemon, other instances)
-        // We use State which implements CosmicConfigEntry
+        // Watch for state changes from daemon (connected outputs, wallpaper state)
+        // State implements CosmicConfigEntry and triggers on both config and state changes
         if self.config_context.is_some() {
             subscriptions.push(
-                cosmic_config::config_subscription::<_, glowberry_config::state::State>(
+                cosmic_config::config_subscription::<_, State>(
                     std::any::TypeId::of::<Self>(),
                     glowberry_config::NAME.into(),
-                    glowberry_config::state::State::version(),
+                    State::version(),
                 )
                 .map(|update| {
                     if !update.errors.is_empty() {
                         for why in &update.errors {
-                            tracing::error!(?why, "config subscription error");
+                            tracing::error!(?why, "state subscription error");
                         }
                     }
-                    // Reload the full config when changes are detected
-                    if let Ok(ctx) = glowberry_config::context() {
-                        if let Ok(config) = Config::load(&ctx) {
-                            return Message::ConfigChanged(config);
-                        }
-                    }
-                    // Return current config if reload fails
-                    Message::ConfigChanged(Config::default())
+                    // Reload config and refresh state
+                    let config = glowberry_config::context()
+                        .ok()
+                        .and_then(|ctx| Config::load(&ctx).ok());
+                    Message::ConfigOrStateChanged(config)
                 }),
             );
         }
@@ -599,26 +598,28 @@ impl cosmic::Application for GlowBerrySettings {
                 }
             }
 
-            Message::ConfigChanged(config) => {
-                // Only update if config actually changed
-                if self.config != config {
-                    tracing::debug!("Config changed externally, reloading");
-                    self.config = config;
-                    self.init_from_config();
-                    
-                    // Update prefer_low_power from config
-                    if let Some(ctx) = &self.config_context {
-                        self.prefer_low_power = ctx.prefer_low_power();
-                    }
-                    
-                    // Refresh outputs from config (daemon may have added new ones)
-                    self.populate_outputs_from_config();
-                    
-                    // Re-cache display image if needed
-                    if matches!(self.selection.active, Choice::Wallpaper(_)) {
-                        self.cache_display_image();
+            Message::ConfigOrStateChanged(maybe_config) => {
+                // Update config if provided and different
+                if let Some(config) = maybe_config {
+                    if self.config != config {
+                        tracing::debug!("Config changed externally, reloading");
+                        self.config = config;
+                        self.init_from_config();
+                        
+                        // Update prefer_low_power from config
+                        if let Some(ctx) = &self.config_context {
+                            self.prefer_low_power = ctx.prefer_low_power();
+                        }
+                        
+                        // Re-cache display image if needed
+                        if matches!(self.selection.active, Choice::Wallpaper(_)) {
+                            self.cache_display_image();
+                        }
                     }
                 }
+                
+                // Always refresh connected outputs (state may have changed)
+                self.populate_outputs_from_config();
             }
 
             Message::SetGlowBerryDefault(enable) => {
@@ -1130,13 +1131,25 @@ impl GlowBerrySettings {
         self.cache_display_image();
     }
 
-    /// Populate the outputs tab bar from config
-    /// The daemon adds outputs to config as it discovers them via Wayland
+    /// Populate the outputs tab bar from state (connected outputs)
+    /// The daemon updates the state with currently connected outputs
     fn populate_outputs_from_config(&mut self) {
         self.outputs.clear();
         
-        // Get outputs from config - these are outputs that have per-display backgrounds
-        let output_names: Vec<String> = self.config.outputs.iter().cloned().collect();
+        // Get connected outputs from state - these are the currently connected displays
+        let connected_outputs: Vec<String> = State::state()
+            .ok()
+            .and_then(|state_helper| State::get_entry(&state_helper).ok())
+            .map(|state| state.connected_outputs)
+            .unwrap_or_default();
+        
+        // If no connected outputs in state, fall back to config outputs
+        // (This handles the case where daemon hasn't written state yet)
+        let output_names: Vec<String> = if connected_outputs.is_empty() {
+            self.config.outputs.iter().cloned().collect()
+        } else {
+            connected_outputs
+        };
         
         self.show_tab_bar = output_names.len() > 1;
         

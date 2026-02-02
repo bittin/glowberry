@@ -11,6 +11,8 @@ pub struct State {
     /// The active wallpaper for each output
     /// (output_name, source of wallpaper)
     pub wallpapers: Vec<(String, Source)>,
+    /// Currently connected outputs (updated by daemon)
+    pub connected_outputs: Vec<String>,
 }
 
 impl State {

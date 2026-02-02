@@ -645,6 +645,29 @@ impl GlowBerry {
         }
     }
 
+    /// Save the list of currently connected outputs to state.
+    /// This allows the settings app to know which displays are currently available.
+    fn save_connected_outputs(&self) {
+        let connected: Vec<String> = self
+            .active_outputs
+            .iter()
+            .filter_map(|o| self.output_state.info(o))
+            .filter_map(|info| info.name.clone())
+            .collect();
+
+        if let Ok(state_helper) = State::state() {
+            let mut state = State::get_entry(&state_helper).unwrap_or_default();
+            if state.connected_outputs != connected {
+                state.connected_outputs = connected;
+                if let Err(err) = state.write_entry(&state_helper) {
+                    tracing::error!("Failed to save connected outputs: {err}");
+                } else {
+                    tracing::debug!(outputs = ?state.connected_outputs, "Saved connected outputs to state");
+                }
+            }
+        }
+    }
+
     fn shader_physical_size(
         layer_size: Option<(u32, u32)>,
         fractional_scale: Option<u32>,
@@ -1094,6 +1117,9 @@ impl OutputHandler for GlowBerry {
                 tracing::error!("{err}");
             }
         }
+
+        // Update connected outputs in state for settings app
+        self.save_connected_outputs();
     }
 
     fn update_output(
@@ -1147,6 +1173,8 @@ impl OutputHandler for GlowBerry {
     ) {
         self.active_outputs.retain(|o| o != &output);
         let Some(output_info) = self.output_state.info(&output) else {
+            // Still try to save connected outputs even if we can't get info
+            self.save_connected_outputs();
             return;
         };
 
@@ -1160,6 +1188,9 @@ impl OutputHandler for GlowBerry {
                 error!("{err}");
             }
         }
+
+        // Update connected outputs in state for settings app
+        self.save_connected_outputs();
 
         let Some(output_wallpaper) =
             self.wallpapers
