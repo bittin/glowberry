@@ -39,23 +39,21 @@ EOF
 }
 
 # Check if /usr/local/bin comes before /usr/bin in PATH
-# Returns 0 if PATH is correct, 1 if not
+# Returns 0 if PATH is correct, 1 if not, 2 if /usr/local/bin not in PATH
 check_path_order() {
     # Get positions of /usr/local/bin and /usr/bin in PATH
-    local path_array
-    IFS=':' read -ra path_array <<< "$PATH"
-    
     local local_bin_pos=-1
     local usr_bin_pos=-1
     local i=0
     
+    IFS=':' read -ra path_array <<< "$PATH"
     for p in "${path_array[@]}"; do
         if [ "$p" = "/usr/local/bin" ]; then
             local_bin_pos=$i
         elif [ "$p" = "/usr/bin" ]; then
             usr_bin_pos=$i
         fi
-        ((i++))
+        i=$((i + 1))
     done
     
     if [ $local_bin_pos -eq -1 ]; then
@@ -107,7 +105,11 @@ enable_glowberry() {
 
     # Create the symlink (requires sudo)
     echo "Creating symlink at $SYMLINK_PATH -> $GLOWBERRY_BIN"
-    sudo ln -sf "$GLOWBERRY_BIN" "$SYMLINK_PATH"
+    if ! sudo ln -sf "$GLOWBERRY_BIN" "$SYMLINK_PATH"; then
+        echo ""
+        echo "Error: Failed to create symlink. Make sure you have sudo privileges."
+        exit 1
+    fi
 
     # Kill any running cosmic-bg/glowberry processes so the new one starts
     echo "Restarting background service..."
@@ -122,7 +124,11 @@ enable_glowberry() {
 disable_glowberry() {
     if [ -L "$SYMLINK_PATH" ]; then
         echo "Removing symlink at $SYMLINK_PATH"
-        sudo rm "$SYMLINK_PATH"
+        if ! sudo rm "$SYMLINK_PATH"; then
+            echo ""
+            echo "Error: Failed to remove symlink. Make sure you have sudo privileges."
+            exit 1
+        fi
     else
         echo "No symlink found at $SYMLINK_PATH"
     fi
