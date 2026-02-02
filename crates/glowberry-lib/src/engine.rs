@@ -206,10 +206,17 @@ impl BackgroundEngine {
                                 | glowberry_config::power_saving::LOW_BATTERY_THRESHOLD
                                 | glowberry_config::power_saving::PAUSE_ON_LID_CLOSED => {
                                     tracing::debug!(key, "power saving config changed");
+                                    let was_paused = state.should_pause_animation();
                                     state.power_saving_config = conf_context.power_saving_config();
                                     tracing::info!(config = ?state.power_saving_config, "Updated power saving config");
                                     // Force reapply frame rates with new config
                                     state.reapply_frame_rates();
+                                    // Resume animation if we were paused and now we're not
+                                    let is_paused = state.should_pause_animation();
+                                    if was_paused && !is_paused {
+                                        tracing::info!("Resuming shader animation after config change");
+                                        state.request_frame_callbacks();
+                                    }
                                 }
 
                                 _ => {
