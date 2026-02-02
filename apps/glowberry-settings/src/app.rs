@@ -3,7 +3,8 @@
 //! Main application state and logic for GlowBerry Settings
 
 use crate::fl;
-use crate::shader_params::{Complexity, ParsedShader, ParamType, ParamValue};
+use crate::shader_params::{ParsedShader, ParamType, ParamValue};
+use glowberry_lib::shader_analysis::{self, Complexity};
 use cosmic::app::context_drawer::{self, ContextDrawer};
 use cosmic::app::{Core, Task};
 use cosmic::iced::Subscription;
@@ -1349,9 +1350,20 @@ impl GlowBerrySettings {
                             ));
                         }
                         
-                        // Resource usage estimate
+                        // Resource usage estimate using naga-based analysis
                         let param_values = self.shader_param_values.get(&shader_idx);
-                        let complexity = parsed.estimate_complexity(param_values);
+                        let iteration_multiplier = calculate_iteration_multiplier(&parsed.params, param_values);
+                        let has_texture = parsed.source_body.contains("iTexture") 
+                            || parsed.source_body.contains("textureSample");
+                        
+                        let complexity = shader_analysis::analyze_glowberry_shader(
+                            &parsed.source_body,
+                            has_texture,
+                            Some(iteration_multiplier),
+                        )
+                        .map(|m| m.complexity())
+                        .unwrap_or(Complexity::Medium); // Default to medium if parsing fails
+                        
                         let usage_label = match complexity {
                             Complexity::Low => fl!("resource-low"),
                             Complexity::Medium => fl!("resource-medium"),
@@ -1607,6 +1619,37 @@ fn create_shader_placeholder(width: u32, height: u32) -> ImageHandle {
         }
     }
     ImageHandle::from_rgba(width, height, data)
+}
+
+/// Calculate iteration multiplier from shader parameters that control loops
+fn calculate_iteration_multiplier(
+    params: &[crate::shader_params::ShaderParam],
+    param_values: Option<&HashMap<String, ParamValue>>,
+) -> f32 {
+    let mut multiplier = 1.0f32;
+    
+    for param in params {
+        let name_lower = param.name.to_lowercase();
+        let is_iteration_param = name_lower.contains("iteration")
+            || name_lower.contains("layers")
+            || name_lower.contains("steps")
+            || name_lower.contains("samples")
+            || (name_lower == "zoom" && param.param_type == ParamType::I32)
+            || name_lower.contains("num_")
+            || name_lower.contains("count");
+        
+        if is_iteration_param {
+            let value = param_values
+                .and_then(|v| v.get(&param.name))
+                .unwrap_or(&param.default);
+            
+            let iter_count = value.as_i32().max(1) as f32;
+            // Normalize: assume default of ~10 iterations is "normal"
+            multiplier *= (iter_count / 10.0).max(0.5);
+        }
+    }
+    
+    multiplier
 }
 
 fn discover_shaders() -> Vec<ShaderInfo> {

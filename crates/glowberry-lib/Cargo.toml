@@ -26,5 +26,6 @@ tracing = { workspace = true }
 walkdir = "2.5"
 wayland-backend = "0.3"
 wgpu = { version = "26.0", default-features = false, features = ["vulkan", "wgsl"] }
+naga = { version = "26.0", features = ["wgsl-in"] }
 bytemuck = "1.24"
 thiserror = "2"
