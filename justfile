@@ -83,6 +83,20 @@ run-settings *args:
 
 # Installs all files (daemon + settings app)
 install: install-daemon install-settings
+    @echo ""
+    @echo "=========================================="
+    @echo "  GlowBerry installed successfully!"
+    @echo "=========================================="
+    @echo ""
+    @echo "To enable GlowBerry as your background service, run:"
+    @echo ""
+    @echo "  glowberry-switch enable"
+    @echo ""
+    @echo "This will create a symlink so cosmic-session runs"
+    @echo "GlowBerry instead of the original cosmic-bg."
+    @echo ""
+    @echo "You can also enable it from glowberry-settings."
+    @echo ""
 
 # Installs only the daemon
 install-daemon:
@@ -103,7 +117,28 @@ install-settings:
     install -Dm0644 {{settings-symbolic-src}} {{settings-symbolic-dst}}
 
 # Uninstalls all installed files
-uninstall: uninstall-daemon uninstall-settings
+uninstall: _check-glowberry-disabled uninstall-daemon uninstall-settings
+
+# Check if GlowBerry override is disabled before uninstalling
+_check-glowberry-disabled:
+    #!/usr/bin/env bash
+    if [ -L /usr/local/bin/cosmic-bg ]; then
+        TARGET=$(readlink /usr/local/bin/cosmic-bg)
+        if echo "$TARGET" | grep -q glowberry; then
+            echo "=========================================="
+            echo "  WARNING: GlowBerry is still enabled!"
+            echo "=========================================="
+            echo ""
+            echo "The symlink at /usr/local/bin/cosmic-bg still points to GlowBerry."
+            echo "Please disable it first before uninstalling:"
+            echo ""
+            echo "  glowberry-switch disable"
+            echo ""
+            echo "Then run 'sudo just uninstall' again."
+            echo ""
+            exit 1
+        fi
+    fi
 
 # Uninstalls only the daemon
 uninstall-daemon:
@@ -232,14 +267,6 @@ which-cosmic-bg:
     fi
 
 
-
-# Import settings from official cosmic-bg
-import-cosmic-bg:
-    {{bin-src}} --import-cosmic-bg
-
-# Export settings to official cosmic-bg format
-export-cosmic-bg:
-    {{bin-src}} --export-cosmic-bg
 
 # Update desktop database and icon cache after installation
 update-cache:
