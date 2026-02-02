@@ -1,7 +1,7 @@
 // [SHADER]
 // name: Origami
-// author: XorDev (adapted for GlowBerry)
-// source: https://x.com/XorDev/status/1727206969038213426
+// author: @XorDev (adapted for GlowBerry)
+// source: https://www.shadertoy.com/view/ctGyWK
 // license: CC BY-NC-SA 3.0
 //
 // [PARAMS]

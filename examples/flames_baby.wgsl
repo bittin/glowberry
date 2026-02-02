@@ -1,7 +1,7 @@
 // [SHADER]
-// name: Four Flames
-// author: cmzw_ (adapted for GlowBerry)
-// source: https://x.com/cmzw_/status/1912538189010739688
+// name: Flames baby
+// author: @supah (adapted for GlowBerry)
+// source: https://www.shadertoy.com/view/3XfXRN
 // license: CC BY-NC-SA 3.0
 //
 // [PARAMS]

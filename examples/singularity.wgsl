@@ -1,7 +1,7 @@
 // [SHADER]
-// name: Black Hole
-// author: srtuss (adapted for GlowBerry)
-// source: https://www.shadertoy.com/view/MsXXWl
+// name: Singularity
+// author: @XorDev (adapted for GlowBerry)
+// source: https://www.shadertoy.com/view/3csSWB
 // license: CC BY-NC-SA 3.0
 //
 // [PARAMS]
