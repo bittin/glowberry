@@ -2,8 +2,8 @@
 
 //! Wallpaper loading subscription
 
-use cosmic::iced::futures::{Stream, StreamExt as _};
 use cosmic::iced::Subscription;
+use cosmic::iced::futures::{Stream, StreamExt as _};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -28,15 +28,10 @@ pub enum WallpaperEvent {
 
 /// Create a subscription that loads wallpapers from the given directory
 pub fn wallpapers(current_dir: PathBuf) -> Subscription<WallpaperEvent> {
-    Subscription::run_with_id(
-        current_dir.clone(),
-        async_stream(current_dir),
-    )
+    Subscription::run_with_id(current_dir.clone(), async_stream(current_dir))
 }
 
-fn async_stream(
-    current_dir: PathBuf,
-) -> impl Stream<Item = WallpaperEvent> {
+fn async_stream(current_dir: PathBuf) -> impl Stream<Item = WallpaperEvent> {
     futures_lite::stream::unfold(LoadState::Init(current_dir), |state| async move {
         match state {
             LoadState::Init(path) => Some((WallpaperEvent::Loading, LoadState::Loading(path))),
@@ -127,7 +122,11 @@ async fn load_image_with_thumbnail(path: PathBuf) -> Option<(PathBuf, RgbaImage,
 
 fn load_image_with_thumbnail_sync(
     path: &PathBuf,
-) -> Option<(PathBuf, ImageBuffer<Rgba<u8>, Vec<u8>>, ImageBuffer<Rgba<u8>, Vec<u8>>)> {
+) -> Option<(
+    PathBuf,
+    ImageBuffer<Rgba<u8>, Vec<u8>>,
+    ImageBuffer<Rgba<u8>, Vec<u8>>,
+)> {
     // Try to load the image
     let image = if path.extension().is_some_and(|e| e == "jxl") {
         decode_jpegxl(path).ok()?

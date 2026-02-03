@@ -16,8 +16,11 @@ fn main() -> cosmic::iced::Result {
     i18n::init(&requested_languages);
 
     // Settings for configuring the application window and iced runtime
-    let settings = cosmic::app::Settings::default()
-        .size_limits(cosmic::iced::Limits::NONE.min_width(400.0).min_height(300.0));
+    let settings = cosmic::app::Settings::default().size_limits(
+        cosmic::iced::Limits::NONE
+            .min_width(400.0)
+            .min_height(300.0),
+    );
 
     // Start the application
     cosmic::app::run::<GlowBerrySettings>(settings, ())

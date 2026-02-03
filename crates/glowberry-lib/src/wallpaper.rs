@@ -4,7 +4,7 @@ use crate::{colored, draw, engine::GlowBerry, engine::GlowBerryLayer, scaler};
 use cosmic_config::CosmicConfigEntry;
 use eyre::eyre;
 use glowberry_config::{
-    state::State, Color, Entry, SamplingMethod, ScalingMode, ShaderSource, Source,
+    Color, Entry, SamplingMethod, ScalingMode, ShaderSource, Source, state::State,
 };
 use image::{DynamicImage, ImageReader};
 use jxl_oxide::integration::JxlDecoder;
@@ -12,9 +12,8 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rand::{rng, seq::SliceRandom};
 use sctk::reexports::{
     calloop::{
-        self,
+        self, RegistrationToken,
         timer::{TimeoutAction, Timer},
-        RegistrationToken,
     },
     client::QueueHandle,
 };

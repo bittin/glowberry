@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use notify::Event;
-use sctk::reexports::calloop::{channel, LoopHandle};
+use sctk::reexports::calloop::{LoopHandle, channel};
 
 pub fn img_source<T, F>(
     handle: &LoopHandle<T>,

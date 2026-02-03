@@ -13,8 +13,8 @@ pub mod wallpaper;
 
 pub use engine::{BackgroundEngine, BackgroundHandle, EngineConfig, GlowBerry, GlowBerryLayer};
 pub use external_surface::{
-    has_shader_background, load_background_image, load_background_source, load_shader_source,
-    BackgroundSource, ExternalSurfaceError,
+    BackgroundSource, ExternalSurfaceError, has_shader_background, load_background_image,
+    load_background_source, load_shader_source,
 };
 pub use user_context::{EnvGuard, UserContext};
 pub use wallpaper::Wallpaper;

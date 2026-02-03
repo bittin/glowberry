@@ -3,19 +3,21 @@
 //! Main application state and logic for GlowBerry Settings
 
 use crate::fl;
-use crate::shader_params::{ParsedShader, ParamType, ParamValue};
-use glowberry_lib::shader_analysis::{self, Complexity};
+use crate::shader_params::{ParamType, ParamValue, ParsedShader};
 use cosmic::app::context_drawer::{self, ContextDrawer};
 use cosmic::app::{Core, Task};
 use cosmic::iced::Subscription;
-use cosmic::iced_runtime::core::image::Handle as ImageHandle;
-use cosmic::widget::{self, button, container, dropdown, segmented_button, settings, slider, tab_bar, text, toggler};
-use cosmic::{Apply, ApplicationExt, Element};
 use cosmic::iced::{Alignment, Length};
+use cosmic::iced_runtime::core::image::Handle as ImageHandle;
+use cosmic::widget::{
+    self, button, container, dropdown, segmented_button, settings, slider, tab_bar, text, toggler,
+};
+use cosmic::{ApplicationExt, Apply, Element};
 use cosmic_config::CosmicConfigEntry;
-use glowberry_config::{Color, Config, Context as ConfigContext, Entry, Gradient, Source};
 use glowberry_config::power_saving::{OnBatteryAction, PowerSavingConfig};
 use glowberry_config::state::State;
+use glowberry_config::{Color, Config, Context as ConfigContext, Entry, Gradient, Source};
+use glowberry_lib::shader_analysis::{self, Complexity};
 use image::{ImageBuffer, Rgba};
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 use std::borrow::Cow;
@@ -94,22 +96,25 @@ pub struct GlowBerrySettings {
 
     /// Current shader parameter values (shader_index -> param_name -> value)
     shader_param_values: HashMap<usize, HashMap<String, ParamValue>>,
-    
+
     /// Whether shader details section is expanded
     shader_details_expanded: bool,
-    
+
     /// Power saving configuration
     power_saving: PowerSavingConfig,
-    
+
     /// On battery action options for dropdown
     on_battery_action_options: Vec<String>,
     /// Selected on battery action index
     selected_on_battery_action: usize,
-    
+
     /// Low battery threshold options for dropdown
     low_battery_threshold_options: Vec<String>,
     /// Selected low battery threshold index
     selected_low_battery_threshold: usize,
+
+    /// Window background opacity (0.0 = transparent, 1.0 = opaque)
+    window_opacity: f32,
 }
 
 /// Information about an available shader
@@ -195,7 +200,7 @@ pub enum Message {
     ToggleShaderDetails,
     /// Reset shader parameters to defaults
     ResetShaderParams(usize),
-    
+
     // Power saving messages
     /// Change on battery action
     SetOnBatteryAction(usize),
@@ -205,6 +210,11 @@ pub enum Message {
     SetLowBatteryThreshold(usize),
     /// Toggle pause when lid closed
     SetPauseOnLidClosed(bool),
+
+    /// Window opacity slider changed (live preview)
+    SetWindowOpacity(f32),
+    /// Window opacity slider released (save to config)
+    WindowOpacityReleased,
 }
 
 /// Default colors available in the color picker
@@ -260,7 +270,10 @@ impl cosmic::Application for GlowBerrySettings {
         &mut self.core
     }
 
-    fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
+    fn init(mut core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
+        // Disable the default content container so we can apply our own background with opacity
+        core.window.content_container = false;
+
         // Load configuration
         let config_context = glowberry_config::context().ok();
         let config = config_context
@@ -296,12 +309,15 @@ impl cosmic::Application for GlowBerrySettings {
         let about = widget::about::About::default()
             .name(fl!("app-title"))
             .version(env!("CARGO_PKG_VERSION"))
-            .icon(widget::icon::from_name("io.github.hojjatabdollahi.glowberry"))
+            .icon(widget::icon::from_name(
+                "io.github.hojjatabdollahi.glowberry",
+            ))
             .author("Hojjat Abdollahi")
             .license("MPL-2.0")
-            .links([
-                (fl!("repository"), "https://github.com/hojjatabdollahi/glowberry"),
-            ]);
+            .links([(
+                fl!("repository"),
+                "https://github.com/hojjatabdollahi/glowberry",
+            )]);
 
         let mut app = Self {
             core,
@@ -317,11 +333,7 @@ impl cosmic::Application for GlowBerrySettings {
             available_shaders,
             shader_thumbnails,
             selected_shader_frame_rate: 1, // 30 FPS default
-            frame_rate_options: vec![
-                fl!("fps-15"),
-                fl!("fps-30"),
-                fl!("fps-60"),
-            ],
+            frame_rate_options: vec![fl!("fps-15"), fl!("fps-30"), fl!("fps-60")],
             fit_options: vec![fl!("fit-fill"), fl!("fit-fit")],
             selected_fit: 0,
             cached_display_handle: None,
@@ -346,13 +358,15 @@ impl cosmic::Application for GlowBerrySettings {
                 "50%".to_string(),
             ],
             selected_low_battery_threshold: 1, // 20% default
+            window_opacity: 1.0,               // Will be set below from config
         };
-        
-        // Load prefer_low_power and power saving from config
+
+        // Load prefer_low_power, power saving, and window opacity from config
         if let Some(ctx) = &app.config_context {
             app.prefer_low_power = ctx.prefer_low_power();
             app.power_saving = ctx.power_saving_config();
-            
+            app.window_opacity = ctx.window_opacity();
+
             // Set dropdown indices based on loaded config
             app.selected_on_battery_action = match app.power_saving.on_battery_action {
                 OnBatteryAction::Nothing => 0,
@@ -379,7 +393,7 @@ impl cosmic::Application for GlowBerrySettings {
 
         // Set the window title and start loading shader thumbnails
         let title_task = app.set_window_title(fl!("app-title"));
-        
+
         let shader_task = if !app.available_shaders.is_empty() {
             app.load_shader_thumbnails()
         } else {
@@ -518,17 +532,14 @@ impl cosmic::Application for GlowBerrySettings {
                     } else {
                         Some(&self.config.default_background)
                     };
-                    
+
                     // Only select a wallpaper if config source is a Path
                     // Don't override if user has a Color or Shader selected
                     if let Some(entry) = entry {
                         if let Source::Path(config_path) = &entry.source {
                             // Find the wallpaper that matches the config path
-                            if let Some((key, _)) = self
-                                .selection
-                                .paths
-                                .iter()
-                                .find(|(_, p)| *p == config_path)
+                            if let Some((key, _)) =
+                                self.selection.paths.iter().find(|(_, p)| *p == config_path)
                             {
                                 self.selection.active = Choice::Wallpaper(key);
                                 self.categories.selected = Some(Category::Wallpapers);
@@ -540,7 +551,7 @@ impl cosmic::Application for GlowBerrySettings {
                             }
                         }
                     }
-                    
+
                     // Only cache display image if a wallpaper is selected
                     if matches!(self.selection.active, Choice::Wallpaper(_)) {
                         self.cache_display_image();
@@ -583,7 +594,7 @@ impl cosmic::Application for GlowBerrySettings {
                 self.outputs.activate(entity);
                 if let Some(name) = self.outputs.data::<OutputName>(entity) {
                     self.active_output = Some(name.0.clone());
-                    
+
                     // Load the wallpaper for this specific output if it exists
                     if let Some(entry) = self.config.entry(&name.0) {
                         self.select_entry_source(&entry.source.clone());
@@ -606,19 +617,19 @@ impl cosmic::Application for GlowBerrySettings {
                         tracing::debug!("Config changed externally, reloading");
                         self.config = config;
                         self.init_from_config();
-                        
+
                         // Update prefer_low_power from config
                         if let Some(ctx) = &self.config_context {
                             self.prefer_low_power = ctx.prefer_low_power();
                         }
-                        
+
                         // Re-cache display image if needed
                         if matches!(self.selection.active, Choice::Wallpaper(_)) {
                             self.cache_display_image();
                         }
                     }
                 }
-                
+
                 // Always refresh connected outputs (state may have changed)
                 self.populate_outputs_from_config();
             }
@@ -626,9 +637,7 @@ impl cosmic::Application for GlowBerrySettings {
             Message::SetGlowBerryDefault(enable) => {
                 // Run the enable/disable command asynchronously with pkexec
                 return Task::perform(
-                    async move {
-                        set_glowberry_default(enable).await
-                    },
+                    async move { set_glowberry_default(enable).await },
                     |result| cosmic::Action::App(Message::SetGlowBerryDefaultResult(result)),
                 );
             }
@@ -658,22 +667,22 @@ impl cosmic::Application for GlowBerrySettings {
                     .insert(param_name, value);
                 // UI will update to show new value, but config is not written
             }
-            
+
             Message::ShaderParamReleased => {
                 // Apply the shader with current parameters when slider is released
                 if matches!(self.selection.active, Choice::Shader(_)) {
                     self.apply_selection();
                 }
             }
-            
+
             Message::ToggleShaderDetails => {
                 self.shader_details_expanded = !self.shader_details_expanded;
             }
-            
+
             Message::ResetShaderParams(shader_idx) => {
                 // Remove all custom parameter values for this shader
                 self.shader_param_values.remove(&shader_idx);
-                
+
                 // Re-apply the shader with default parameters
                 if let Choice::Shader(idx) = self.selection.active {
                     if idx == shader_idx {
@@ -681,7 +690,7 @@ impl cosmic::Application for GlowBerrySettings {
                     }
                 }
             }
-            
+
             // Power saving messages
             Message::SetOnBatteryAction(idx) => {
                 self.selected_on_battery_action = idx;
@@ -698,14 +707,14 @@ impl cosmic::Application for GlowBerrySettings {
                     let _ = ctx.set_on_battery_action(action);
                 }
             }
-            
+
             Message::SetPauseOnLowBattery(value) => {
                 self.power_saving.pause_on_low_battery = value;
                 if let Some(ctx) = &self.config_context {
                     let _ = ctx.set_pause_on_low_battery(value);
                 }
             }
-            
+
             Message::SetLowBatteryThreshold(idx) => {
                 self.selected_low_battery_threshold = idx;
                 let threshold = match idx {
@@ -720,11 +729,23 @@ impl cosmic::Application for GlowBerrySettings {
                     let _ = ctx.set_low_battery_threshold(threshold);
                 }
             }
-            
+
             Message::SetPauseOnLidClosed(value) => {
                 self.power_saving.pause_on_lid_closed = value;
                 if let Some(ctx) = &self.config_context {
                     let _ = ctx.set_pause_on_lid_closed(value);
+                }
+            }
+
+            Message::SetWindowOpacity(value) => {
+                // Update the opacity value for live preview
+                self.window_opacity = value.clamp(0.0, 1.0);
+            }
+
+            Message::WindowOpacityReleased => {
+                // Save the opacity value to config when slider is released
+                if let Some(ctx) = &self.config_context {
+                    let _ = ctx.set_window_opacity(self.window_opacity);
                 }
             }
         }
@@ -796,7 +817,7 @@ impl cosmic::Application for GlowBerrySettings {
         );
 
         // Wrap everything in a scrollable container
-        widget::scrollable(
+        let scrollable_content = widget::scrollable(
             widget::column::with_children(children)
                 .spacing(22)
                 .padding(20)
@@ -804,8 +825,26 @@ impl cosmic::Application for GlowBerrySettings {
                 .align_x(Alignment::Center),
         )
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+        // Apply custom background with opacity
+        let opacity = self.window_opacity;
+        container(scrollable_content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .class(cosmic::theme::Container::custom(move |theme| {
+                let cosmic = theme.cosmic();
+                let mut bg_color: cosmic::iced::Color = cosmic.background.base.into();
+                bg_color.a = opacity;
+                cosmic::widget::container::Style {
+                    background: Some(cosmic::iced::Background::Color(bg_color)),
+                    icon_color: Some(cosmic.background.on.into()),
+                    text_color: Some(cosmic.background.on.into()),
+                    border: cosmic::iced::Border::default(),
+                    shadow: cosmic::iced::Shadow::default(),
+                }
+            }))
+            .into()
     }
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
@@ -841,15 +880,27 @@ impl cosmic::Application for GlowBerrySettings {
             .title(fl!("settings")),
         })
     }
+
+    fn style(&self) -> Option<cosmic::iced_runtime::Appearance> {
+        // Return transparent background for the window surface
+        // The actual background with opacity is applied via our custom container in view()
+        let theme = cosmic::theme::active();
+        let cosmic_theme = theme.cosmic();
+
+        Some(cosmic::iced_runtime::Appearance {
+            background_color: cosmic::iced::Color::TRANSPARENT,
+            text_color: cosmic_theme.on_bg_color().into(),
+            icon_color: cosmic_theme.on_bg_color().into(),
+        })
+    }
 }
 
 impl GlowBerrySettings {
     /// Build the settings drawer content
     fn settings_drawer_view(&self) -> Element<'_, Message> {
         // Build power saving section
-        let mut power_saving_section = widget::settings::section()
-            .title(fl!("power-saving"));
-        
+        let mut power_saving_section = widget::settings::section().title(fl!("power-saving"));
+
         // On battery power action
         power_saving_section = power_saving_section.add(settings::item(
             fl!("on-battery"),
@@ -859,7 +910,7 @@ impl GlowBerrySettings {
                 Message::SetOnBatteryAction,
             ),
         ));
-        
+
         // Pause on low battery (with conditional threshold dropdown)
         {
             let toggle_row = settings::item(
@@ -867,7 +918,7 @@ impl GlowBerrySettings {
                 toggler(self.power_saving.pause_on_low_battery)
                     .on_toggle(Message::SetPauseOnLowBattery),
             );
-            
+
             if self.power_saving.pause_on_low_battery {
                 let dropdown_row = settings::item(
                     fl!("low-battery-threshold"),
@@ -877,26 +928,22 @@ impl GlowBerrySettings {
                         Message::SetLowBatteryThreshold,
                     ),
                 );
-                
+
                 power_saving_section = power_saving_section.add(
-                    widget::column::with_children(vec![
-                        toggle_row.into(),
-                        dropdown_row.into(),
-                    ])
-                    .spacing(8)
+                    widget::column::with_children(vec![toggle_row.into(), dropdown_row.into()])
+                        .spacing(8),
                 );
             } else {
                 power_saving_section = power_saving_section.add(toggle_row);
             }
         }
-        
+
         // Pause when lid closed
         power_saving_section = power_saving_section.add(settings::item(
             fl!("pause-lid-closed"),
-            toggler(self.power_saving.pause_on_lid_closed)
-                .on_toggle(Message::SetPauseOnLidClosed),
+            toggler(self.power_saving.pause_on_lid_closed).on_toggle(Message::SetPauseOnLidClosed),
         ));
-        
+
         // Build background service section with optional PATH warning
         let mut bg_service_section = widget::settings::section()
             .title(fl!("background-service"))
@@ -904,19 +951,40 @@ impl GlowBerrySettings {
                 fl!("use-glowberry"),
                 toggler(self.glowberry_is_default).on_toggle(Message::SetGlowBerryDefault),
             ));
-        
+
         // Add PATH order warning if incorrect
         if !is_path_order_correct() {
-            bg_service_section = bg_service_section.add(
-                widget::text(fl!("path-order-warning"))
-                    .size(12)
-                    .class(cosmic::theme::Text::Color(cosmic::iced::Color::from_rgb(0.9, 0.6, 0.2)))
-            );
+            bg_service_section =
+                bg_service_section.add(widget::text(fl!("path-order-warning")).size(12).class(
+                    cosmic::theme::Text::Color(cosmic::iced::Color::from_rgb(0.9, 0.6, 0.2)),
+                ));
         }
-        
+
+        // Build appearance section with window opacity slider
+        let appearance_section =
+            widget::settings::section()
+                .title(fl!("appearance"))
+                .add(settings::item(
+                    fl!("window-opacity"),
+                    widget::row::with_children(vec![
+                        slider(0.0..=1.0, self.window_opacity, Message::SetWindowOpacity)
+                            .on_release(Message::WindowOpacityReleased)
+                            .step(0.01)
+                            .width(Length::Fixed(150.0))
+                            .into(),
+                        widget::text(format!("{:.0}%", self.window_opacity * 100.0))
+                            .width(Length::Fixed(50.0))
+                            .into(),
+                    ])
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                ));
+
         widget::settings::view_column(vec![
             // Default background service section
             bg_service_section.into(),
+            // Appearance section
+            appearance_section.into(),
             // GPU settings section
             widget::settings::section()
                 .title(fl!("performance"))
@@ -937,11 +1005,13 @@ impl GlowBerrySettings {
             &self.config.default_background
         } else if let Some(ref output_name) = self.active_output {
             // Try to find a per-output entry
-            self.config.entry(output_name).unwrap_or(&self.config.default_background)
+            self.config
+                .entry(output_name)
+                .unwrap_or(&self.config.default_background)
         } else {
             &self.config.default_background
         };
-        
+
         self.select_entry_source(&entry.source.clone());
     }
 
@@ -980,35 +1050,50 @@ impl GlowBerrySettings {
                         2 => 60,
                         _ => 30,
                     };
-                    
+
                     // Check if we have custom parameter values for this shader
-                    let (shader_content, source_path, params) = if let Some(parsed) = &shader.parsed {
+                    let (shader_content, source_path, params) = if let Some(parsed) = &shader.parsed
+                    {
                         // Get current parameter values, falling back to defaults
-                        let values = self.shader_param_values
+                        let values = self
+                            .shader_param_values
                             .get(idx)
                             .cloned()
                             .unwrap_or_default();
-                        
+
                         // Convert ParamValue HashMap to f64 HashMap for config storage
-                        let params: HashMap<String, f64> = values.iter()
+                        let params: HashMap<String, f64> = values
+                            .iter()
                             .map(|(k, v)| (k.clone(), v.as_f32() as f64))
                             .collect();
-                        
+
                         // Only generate custom source if we have any custom values
                         if values.is_empty() {
                             // No custom params, use path for efficiency
-                            (glowberry_config::ShaderContent::Path(shader.path.clone()), None, params)
+                            (
+                                glowberry_config::ShaderContent::Path(shader.path.clone()),
+                                None,
+                                params,
+                            )
                         } else {
                             // Generate shader source with parameter values
                             // Keep source_path so we can identify the shader later
                             let generated_source = parsed.generate_source(&values);
-                            (glowberry_config::ShaderContent::Code(generated_source), Some(shader.path.clone()), params)
+                            (
+                                glowberry_config::ShaderContent::Code(generated_source),
+                                Some(shader.path.clone()),
+                                params,
+                            )
                         }
                     } else {
                         // No parsed shader, use path
-                        (glowberry_config::ShaderContent::Path(shader.path.clone()), None, HashMap::new())
+                        (
+                            glowberry_config::ShaderContent::Path(shader.path.clone()),
+                            None,
+                            HashMap::new(),
+                        )
                     };
-                    
+
                     Source::Shader(glowberry_config::ShaderSource {
                         shader: shader_content,
                         source_path,
@@ -1065,25 +1150,31 @@ impl GlowBerrySettings {
                         None
                     }
                 });
-                
+
                 let mut matched_idx = None;
                 if let Some(config_path) = match_path {
                     // Try exact path match first
-                    if let Some(idx) = self.available_shaders.iter().position(|s| &s.path == config_path) {
+                    if let Some(idx) = self
+                        .available_shaders
+                        .iter()
+                        .position(|s| &s.path == config_path)
+                    {
                         self.selection.active = Choice::Shader(idx);
                         matched_idx = Some(idx);
                     } else {
                         // Fall back to filename match (in case paths differ due to XDG_DATA_DIRS)
                         if let Some(config_filename) = config_path.file_name() {
-                            if let Some(idx) = self.available_shaders.iter().position(|s| {
-                                s.path.file_name() == Some(config_filename)
-                            }) {
+                            if let Some(idx) = self
+                                .available_shaders
+                                .iter()
+                                .position(|s| s.path.file_name() == Some(config_filename))
+                            {
                                 self.selection.active = Choice::Shader(idx);
                                 matched_idx = Some(idx);
                             }
                         }
                     }
-                    
+
                     // If no shader found, select the first one if available
                     if matched_idx.is_none() && !self.available_shaders.is_empty() {
                         self.selection.active = Choice::Shader(0);
@@ -1094,13 +1185,13 @@ impl GlowBerrySettings {
                     self.selection.active = Choice::Shader(0);
                     matched_idx = Some(0);
                 }
-                
+
                 // Load parameter values from config
                 if let Some(idx) = matched_idx {
                     if !shader_source.params.is_empty() {
                         // Convert f64 values back to ParamValue based on shader's param definitions
                         let mut param_values: HashMap<String, ParamValue> = HashMap::new();
-                        
+
                         if let Some(shader_info) = self.available_shaders.get(idx) {
                             if let Some(parsed) = &shader_info.parsed {
                                 for param in &parsed.params {
@@ -1114,13 +1205,13 @@ impl GlowBerrySettings {
                                 }
                             }
                         }
-                        
+
                         if !param_values.is_empty() {
                             self.shader_param_values.insert(idx, param_values);
                         }
                     }
                 }
-                
+
                 self.selected_shader_frame_rate = match shader_source.frame_rate {
                     0..=22 => 0,
                     23..=45 => 1,
@@ -1136,14 +1227,14 @@ impl GlowBerrySettings {
     /// The daemon updates the state with currently connected outputs
     fn populate_outputs_from_config(&mut self) {
         self.outputs.clear();
-        
+
         // Get connected outputs from state - these are the currently connected displays
         let connected_outputs: Vec<String> = State::state()
             .ok()
             .and_then(|state_helper| State::get_entry(&state_helper).ok())
             .map(|state| state.connected_outputs)
             .unwrap_or_default();
-        
+
         // If no connected outputs in state, fall back to config outputs
         // (This handles the case where daemon hasn't written state yet)
         let output_names: Vec<String> = if connected_outputs.is_empty() {
@@ -1151,24 +1242,25 @@ impl GlowBerrySettings {
         } else {
             connected_outputs
         };
-        
+
         self.show_tab_bar = output_names.len() > 1;
-        
+
         let mut first = None;
         for name in output_names {
             let is_internal = name == "eDP-1";
-            
+
             // Use the output name directly (e.g., "DP-1", "HDMI-A-1", "eDP-1")
-            let entity = self.outputs
+            let entity = self
+                .outputs
                 .insert()
                 .text(name.clone())
                 .data(OutputName(name));
-            
+
             if is_internal || first.is_none() {
                 first = Some(entity.id());
             }
         }
-        
+
         if let Some(id) = first {
             self.outputs.activate(id);
             if let Some(name) = self.outputs.data::<OutputName>(id) {
@@ -1200,7 +1292,11 @@ impl GlowBerrySettings {
                                         Some(ImageHandle::from_rgba(width, height, rgba))
                                     }
                                     Err(e) => {
-                                        tracing::debug!(?path, ?e, "Failed to render shader preview");
+                                        tracing::debug!(
+                                            ?path,
+                                            ?e,
+                                            "Failed to render shader preview"
+                                        );
                                         None
                                     }
                                 }
@@ -1259,9 +1355,24 @@ impl GlowBerrySettings {
             }
         };
 
+        let opacity = self.window_opacity;
         container(content)
             .padding(8)
-            .class(cosmic::theme::Container::Card)
+            .class(cosmic::theme::Container::custom(move |theme| {
+                let cosmic = theme.cosmic();
+                let mut bg_color: cosmic::iced::Color = cosmic.background.component.base.into();
+                bg_color.a = opacity;
+                cosmic::widget::container::Style {
+                    icon_color: Some(cosmic.background.component.on.into()),
+                    text_color: Some(cosmic.background.component.on.into()),
+                    background: Some(cosmic::iced::Background::Color(bg_color)),
+                    border: cosmic::iced::Border {
+                        radius: cosmic.corner_radii.radius_s.into(),
+                        ..Default::default()
+                    },
+                    shadow: cosmic::iced::Shadow::default(),
+                }
+            }))
             .width(Length::Shrink)
             .into()
     }
@@ -1301,15 +1412,15 @@ impl GlowBerrySettings {
             } else {
                 (fl!("show-details"), "go-down-symbolic")
             };
-            
+
             let details_button = widget::button::text(details_label)
                 .trailing_icon(widget::icon::from_name(chevron_icon).size(16))
                 .on_press(Message::ToggleShaderDetails);
-            
+
             list = list.add(
                 container(details_button)
                     .width(Length::Fill)
-                    .align_x(Alignment::Center)
+                    .align_x(Alignment::Center),
             );
 
             // Collapsible details section
@@ -1317,7 +1428,7 @@ impl GlowBerrySettings {
                 if let Some(shader_info) = self.available_shaders.get(shader_idx) {
                     if let Some(parsed) = &shader_info.parsed {
                         let metadata = &parsed.metadata;
-                        
+
                         // Author
                         if !metadata.author.is_empty() {
                             list = list.add(settings::item(
@@ -1325,23 +1436,21 @@ impl GlowBerrySettings {
                                 widget::text(&metadata.author),
                             ));
                         }
-                        
+
                         // Source (as a clickable link if it looks like a URL)
                         if !metadata.source.is_empty() {
                             let source_url = metadata.source.clone();
-                            let source_widget: Element<'_, Message> = if metadata.source.starts_with("http") {
-                                widget::button::link(source_url.clone())
-                                    .on_press(Message::OpenUrl(source_url))
-                                    .into()
-                            } else {
-                                widget::text(&metadata.source).into()
-                            };
-                            list = list.add(settings::item(
-                                fl!("shader-source"),
-                                source_widget,
-                            ));
+                            let source_widget: Element<'_, Message> =
+                                if metadata.source.starts_with("http") {
+                                    widget::button::link(source_url.clone())
+                                        .on_press(Message::OpenUrl(source_url))
+                                        .into()
+                                } else {
+                                    widget::text(&metadata.source).into()
+                                };
+                            list = list.add(settings::item(fl!("shader-source"), source_widget));
                         }
-                        
+
                         // License
                         if !metadata.license.is_empty() {
                             list = list.add(settings::item(
@@ -1349,13 +1458,14 @@ impl GlowBerrySettings {
                                 widget::text(&metadata.license),
                             ));
                         }
-                        
+
                         // Resource usage estimate using naga-based analysis
                         let param_values = self.shader_param_values.get(&shader_idx);
-                        let iteration_multiplier = calculate_iteration_multiplier(&parsed.params, param_values);
-                        let has_texture = parsed.source_body.contains("iTexture") 
+                        let iteration_multiplier =
+                            calculate_iteration_multiplier(&parsed.params, param_values);
+                        let has_texture = parsed.source_body.contains("iTexture")
                             || parsed.source_body.contains("textureSample");
-                        
+
                         let complexity = shader_analysis::analyze_glowberry_shader(
                             &parsed.source_body,
                             has_texture,
@@ -1363,7 +1473,7 @@ impl GlowBerrySettings {
                         )
                         .map(|m| m.complexity())
                         .unwrap_or(Complexity::Medium); // Default to medium if parsing fails
-                        
+
                         let usage_label = match complexity {
                             Complexity::Low => fl!("resource-low"),
                             Complexity::Medium => fl!("resource-medium"),
@@ -1373,7 +1483,7 @@ impl GlowBerrySettings {
                             fl!("shader-resource-usage"),
                             widget::text(usage_label),
                         ));
-                        
+
                         // Shader parameters
                         for param in &parsed.params {
                             let current_values = self.shader_param_values.get(&shader_idx);
@@ -1445,18 +1555,36 @@ impl GlowBerrySettings {
                                 }
                             }
                         }
-                        
+
                         // Reset to defaults button
                         list = list.add(
                             widget::button::destructive(fl!("reset-to-defaults"))
-                                .on_press(Message::ResetShaderParams(shader_idx))
+                                .on_press(Message::ResetShaderParams(shader_idx)),
                         );
                     }
                 }
             }
         }
 
-        list.into()
+        // Apply custom style with opacity to the list
+        let opacity = self.window_opacity;
+        list.style(cosmic::theme::Container::custom(move |theme| {
+            let cosmic = theme.cosmic();
+            let component = &cosmic.background.component;
+            let mut bg_color: cosmic::iced::Color = component.base.into();
+            bg_color.a = opacity;
+            cosmic::widget::container::Style {
+                icon_color: Some(component.on.into()),
+                text_color: Some(component.on.into()),
+                background: Some(cosmic::iced::Background::Color(bg_color)),
+                border: cosmic::iced::Border {
+                    radius: cosmic.corner_radii.radius_s.into(),
+                    ..Default::default()
+                },
+                shadow: cosmic::iced::Shadow::default(),
+            }
+        }))
+        .into()
     }
 
     fn view_wallpaper_grid(&self) -> Element<'_, Message> {
@@ -1562,7 +1690,7 @@ impl GlowBerrySettings {
 // Helper functions
 
 fn color_image<'a, M: 'a>(color: Color, width: u16, height: u16) -> Element<'a, M> {
-    use cosmic::iced_core::{gradient::Linear, Background, Degrees};
+    use cosmic::iced_core::{Background, Degrees, gradient::Linear};
 
     container(widget::Space::new(width, height))
         .class(cosmic::theme::Container::custom(move |theme| {
@@ -1593,7 +1721,7 @@ fn color_image<'a, M: 'a>(color: Color, width: u16, height: u16) -> Element<'a, 
 }
 
 fn shader_placeholder<'a, M: 'a>(width: u16, height: u16) -> Element<'a, M> {
-    use cosmic::iced_core::{gradient::Linear, Background, Degrees};
+    use cosmic::iced_core::{Background, Degrees, gradient::Linear};
 
     container(widget::Space::new(width, height))
         .class(cosmic::theme::Container::custom(|_| container::Style {
@@ -1627,7 +1755,7 @@ fn calculate_iteration_multiplier(
     param_values: Option<&HashMap<String, ParamValue>>,
 ) -> f32 {
     let mut multiplier = 1.0f32;
-    
+
     for param in params {
         let name_lower = param.name.to_lowercase();
         let is_iteration_param = name_lower.contains("iteration")
@@ -1637,18 +1765,18 @@ fn calculate_iteration_multiplier(
             || (name_lower == "zoom" && param.param_type == ParamType::I32)
             || name_lower.contains("num_")
             || name_lower.contains("count");
-        
+
         if is_iteration_param {
             let value = param_values
                 .and_then(|v| v.get(&param.name))
                 .unwrap_or(&param.default);
-            
+
             let iter_count = value.as_i32().max(1) as f32;
             // Normalize: assume default of ~10 iterations is "normal"
             multiplier *= (iter_count / 10.0).max(0.5);
         }
     }
-    
+
     multiplier
 }
 
@@ -1666,7 +1794,10 @@ fn discover_shaders() -> Vec<ShaderInfo> {
     }
 
     // Standard paths
-    collect_shaders_from_dir(std::path::Path::new("/usr/share/glowberry/shaders"), &mut shaders);
+    collect_shaders_from_dir(
+        std::path::Path::new("/usr/share/glowberry/shaders"),
+        &mut shaders,
+    );
 
     shaders.sort_by(|a, b| a.name.cmp(&b.name));
     shaders.dedup_by(|a, b| a.name == b.name);
@@ -1683,7 +1814,7 @@ fn collect_shaders_from_dir(dir: &std::path::Path, shaders: &mut Vec<ShaderInfo>
         if path.extension().is_some_and(|e| e == "wgsl") {
             // Try to parse the shader to get metadata
             let parsed = ParsedShader::parse(&path);
-            
+
             // Use parsed name if available, otherwise derive from filename
             let name = parsed
                 .as_ref()
@@ -1695,7 +1826,7 @@ fn collect_shaders_from_dir(dir: &std::path::Path, shaders: &mut Vec<ShaderInfo>
                         .map(|s| titlecase(&s.replace('_', " ")))
                         .unwrap_or_else(|| "Unknown".to_string())
                 });
-            
+
             shaders.push(ShaderInfo { path, name, parsed });
         }
     }
@@ -1715,17 +1846,17 @@ fn titlecase(s: &str) -> String {
 }
 
 /// Check if /usr/local/bin comes before /usr/bin in PATH.
-/// 
+///
 /// Returns:
 /// - `Ok(true)` if PATH order is correct (or /usr/bin not in PATH)
 /// - `Ok(false)` if /usr/bin comes before /usr/local/bin
 /// - `Err(msg)` if /usr/local/bin is not in PATH at all
 fn check_path_order() -> Result<bool, &'static str> {
     let path = std::env::var("PATH").unwrap_or_default();
-    
+
     let mut local_bin_pos: Option<usize> = None;
     let mut usr_bin_pos: Option<usize> = None;
-    
+
     for (i, p) in path.split(':').enumerate() {
         if p == "/usr/local/bin" && local_bin_pos.is_none() {
             local_bin_pos = Some(i);
@@ -1733,7 +1864,7 @@ fn check_path_order() -> Result<bool, &'static str> {
             usr_bin_pos = Some(i);
         }
     }
-    
+
     match (local_bin_pos, usr_bin_pos) {
         (None, _) => Err("/usr/local/bin is not in PATH"),
         (Some(_), None) => Ok(true), // /usr/bin not in PATH, so /usr/local/bin wins
@@ -1742,7 +1873,7 @@ fn check_path_order() -> Result<bool, &'static str> {
 }
 
 /// Check if GlowBerry is currently enabled as the default background service.
-/// 
+///
 /// This works by checking if /usr/local/bin/cosmic-bg exists and is a symlink
 /// pointing to glowberry. Since /usr/local/bin is searched before /usr/bin in PATH,
 /// cosmic-session will run glowberry instead of the original cosmic-bg when enabled.
@@ -1759,10 +1890,10 @@ fn is_path_order_correct() -> bool {
 }
 
 /// Enable or disable GlowBerry as the default background service.
-/// 
+///
 /// When enabled, creates a symlink at /usr/local/bin/cosmic-bg -> /usr/bin/glowberry.
 /// When disabled, removes the symlink so the original /usr/bin/cosmic-bg is used.
-/// 
+///
 /// This requires elevated privileges for the symlink operations, so we use pkexec.
 async fn set_glowberry_default(enable: bool) -> Result<bool, String> {
     use tokio::process::Command;
@@ -1781,7 +1912,8 @@ async fn set_glowberry_default(enable: bool) -> Result<bool, String> {
                 return Err(
                     "Cannot enable GlowBerry: /usr/bin comes before /usr/local/bin in PATH. \
                     The symlink override won't work. Please fix your PATH configuration \
-                    so that /usr/local/bin appears before /usr/bin.".to_string()
+                    so that /usr/local/bin appears before /usr/bin."
+                        .to_string(),
                 );
             }
             Ok(true) => {} // PATH is correct, proceed

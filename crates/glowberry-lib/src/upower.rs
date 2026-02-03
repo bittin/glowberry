@@ -105,12 +105,19 @@ pub struct PowerMonitor {
 
 impl PowerMonitor {
     /// Create a new power monitor.
-    /// 
+    ///
     /// Returns the monitor and a handle that can be used to query the current state.
     pub fn new() -> (Self, PowerMonitorHandle) {
         let (tx, rx) = watch::channel(PowerState::default());
         let handle = PowerMonitorHandle { rx };
-        (Self { tx, handle: handle.clone(), notify_tx: None }, handle)
+        (
+            Self {
+                tx,
+                handle: handle.clone(),
+                notify_tx: None,
+            },
+            handle,
+        )
     }
 
     /// Set a notification sender that will be called when power state changes.
@@ -126,7 +133,7 @@ impl PowerMonitor {
     }
 
     /// Start monitoring power state changes.
-    /// 
+    ///
     /// This spawns a tokio task that monitors UPower D-Bus signals and updates
     /// the power state accordingly. The task runs until the connection is lost
     /// or the monitor is dropped.
@@ -137,7 +144,7 @@ impl PowerMonitor {
         // Get initial state
         let on_battery = upower.on_battery().await.unwrap_or(false);
         let lid_is_closed = upower.lid_is_closed().await.unwrap_or(false);
-        
+
         // Get battery percentage from display device
         let battery_percentage = match upower.get_display_device().await {
             Ok(path) => {
@@ -162,7 +169,7 @@ impl PowerMonitor {
         // Clone what we need for the monitoring task
         let tx = self.tx.clone();
         let notify_tx = self.notify_tx.clone();
-        
+
         // Spawn monitoring task
         tokio::spawn(async move {
             if let Err(e) = monitor_loop(connection, tx, notify_tx).await {
@@ -180,7 +187,7 @@ async fn monitor_loop(
     notify_tx: Option<CalloopSender<PowerStateChanged>>,
 ) -> zbus::Result<()> {
     let upower = UPowerProxy::new(&connection).await?;
-    
+
     // Get display device for battery monitoring
     let display_device_path = upower.get_display_device().await.ok();
     let display_device = if let Some(ref path) = display_device_path {
@@ -196,7 +203,7 @@ async fn monitor_loop(
     // Subscribe to property changes
     let mut on_battery_stream = upower.receive_on_battery_changed().await;
     let mut lid_closed_stream = upower.receive_lid_is_closed_changed().await;
-    
+
     // Subscribe to battery percentage changes if we have a display device
     let mut percentage_stream = if let Some(ref device) = display_device {
         Some(device.receive_percentage_changed().await)
@@ -231,7 +238,7 @@ async fn monitor_loop(
                     notify(&notify_tx);
                 }
             }
-            Some(change) = async { 
+            Some(change) = async {
                 if let Some(ref mut stream) = percentage_stream {
                     stream.next().await
                 } else {
@@ -257,10 +264,10 @@ async fn monitor_loop(
 }
 
 /// Start a background power monitor and return a handle.
-/// 
+///
 /// This is a convenience function that creates a monitor and starts it
 /// on a new tokio runtime if one isn't already running.
-/// 
+///
 /// If `notify_tx` is provided, it will be called when power state changes,
 /// allowing the caller to wake up their event loop.
 pub fn start_power_monitor(
@@ -278,7 +285,7 @@ pub fn start_power_monitor(
     } else {
         monitor
     };
-    
+
     // Spawn the monitor on a separate thread with its own runtime
     std::thread::spawn(move || {
         rt.block_on(async {

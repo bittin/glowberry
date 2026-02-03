@@ -8,6 +8,8 @@ An enhanced background/wallpaper service with live shader support for COSMIC DE.
 
 Disclaimer: This project extends the functionality of cosmic-bg with live shader wallpapers. When set up correctly, cosmic-session will run GlowBerry instead of cosmic-bg.
 
+https://github.com/user-attachments/assets/44c1a6a2-4c13-4d02-b108-48284f1a5def
+
 ## Features
 
 - Live GPU-rendered shader wallpapers (WGSL)

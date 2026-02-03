@@ -15,6 +15,7 @@ pub const BACKGROUNDS: &str = "backgrounds";
 pub const DEFAULT_BACKGROUND: &str = "all";
 pub const SAME_ON_ALL: &str = "same-on-all";
 pub const PREFER_LOW_POWER: &str = "prefer-low-power";
+pub const WINDOW_OPACITY: &str = "window-opacity";
 
 /// Errors that can occur during config operations
 #[derive(Debug, Error)]
@@ -93,6 +94,26 @@ impl Context {
     pub fn set_prefer_low_power(&self, value: bool) -> Result<(), cosmic_config::Error> {
         if self.prefer_low_power() != value {
             return self.0.set(PREFER_LOW_POWER, value);
+        }
+        Ok(())
+    }
+
+    /// Get the window opacity setting for the settings app.
+    /// Returns a value between 0.0 (fully transparent) and 1.0 (fully opaque).
+    /// Default is 1.0 (fully opaque).
+    #[must_use]
+    pub fn window_opacity(&self) -> f32 {
+        self.0
+            .get::<f32>(WINDOW_OPACITY)
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0)
+    }
+
+    /// Set the window opacity setting.
+    pub fn set_window_opacity(&self, value: f32) -> Result<(), cosmic_config::Error> {
+        let value = value.clamp(0.0, 1.0);
+        if (self.window_opacity() - value).abs() > f32::EPSILON {
+            return self.0.set(WINDOW_OPACITY, value);
         }
         Ok(())
     }

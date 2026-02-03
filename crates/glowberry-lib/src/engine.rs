@@ -2,16 +2,16 @@
 
 use crate::{
     fragment_canvas, gpu, img_source,
-    upower::{start_power_monitor, PowerMonitorHandle, PowerStateChanged},
+    upower::{PowerMonitorHandle, PowerStateChanged, start_power_monitor},
     user_context::{EnvGuard, UserContext},
     wallpaper::Wallpaper,
 };
-use cosmic_config::{calloop::ConfigWatchSource, CosmicConfigEntry};
-use eyre::{eyre, Context};
+use cosmic_config::{CosmicConfigEntry, calloop::ConfigWatchSource};
+use eyre::{Context, eyre};
 use glowberry_config::{
+    Config,
     power_saving::{OnBatteryAction, PowerSavingConfig},
     state::State,
-    Config,
 };
 use sctk::{
     compositor::{CompositorHandler, CompositorState},
@@ -21,13 +21,12 @@ use sctk::{
         calloop,
         calloop_wayland_source::WaylandSource,
         client::{
-            delegate_noop,
+            Connection, Dispatch, Proxy, QueueHandle, Weak, delegate_noop,
             globals::registry_queue_init,
             protocol::{
                 wl_output::{self, WlOutput},
                 wl_surface,
             },
-            Connection, Dispatch, Proxy, QueueHandle, Weak,
         },
         protocols::wp::{
             fractional_scale::v1::client::{
@@ -39,13 +38,13 @@ use sctk::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     shell::{
+        WaylandSurface,
         wlr_layer::{
             Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
             LayerSurfaceConfigure,
         },
-        WaylandSurface,
     },
-    shm::{slot::SlotPool, Shm, ShmHandler},
+    shm::{Shm, ShmHandler, slot::SlotPool},
 };
 use std::thread;
 use tracing::error;

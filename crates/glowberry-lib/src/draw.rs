@@ -4,11 +4,11 @@ use image::{DynamicImage, GenericImageView};
 use sctk::{
     reexports::{
         client::{
-            protocol::wl_callback, protocol::wl_shm, protocol::wl_surface, Dispatch, QueueHandle,
+            Dispatch, QueueHandle, protocol::wl_callback, protocol::wl_shm, protocol::wl_surface,
         },
         protocols::wp::viewporter::client::wp_viewport,
     },
-    shell::{wlr_layer::LayerSurface, WaylandSurface},
+    shell::{WaylandSurface, wlr_layer::LayerSurface},
     shm::slot::{Buffer, CreateBufferError, SlotPool},
 };
 
