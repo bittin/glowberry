@@ -58,7 +58,7 @@ clean-dist: clean
 
 # Compiles with debug profile
 build-debug *args:
-    cargo build {{args}}
+    cargo build --workspace {{args}}
 
 # Compiles with release profile
 build-release *args: (build-debug '--release' args)
