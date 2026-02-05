@@ -518,8 +518,8 @@ impl GlowBerry {
             return true;
         }
 
-        // Check low battery
-        if config.pause_on_low_battery {
+        // Check low battery (only when on battery, not when plugged in)
+        if config.pause_on_low_battery && power_state.on_battery {
             if let Some(percentage) = power_state.battery_percentage {
                 if percentage <= config.low_battery_threshold as f64 {
                     tracing::debug!(
