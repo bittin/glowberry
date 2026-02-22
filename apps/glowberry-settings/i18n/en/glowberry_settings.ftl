@@ -27,7 +27,7 @@ fps-60 = 60 FPS
 
 # Loading states
 loading-wallpapers = Loading wallpapers...
-no-shaders = No shaders found. Install shaders to /usr/share/glowberry/shaders/
+no-shaders = No shaders found. Install shaders to ~/.local/share/glowberry/shaders/
 
 # Shader metadata
 shader-author = Author
@@ -47,7 +47,7 @@ resource-high = High
 settings = Settings
 background-service = Background Service
 use-glowberry = Use GlowBerry as default
-path-order-warning = Warning: /usr/local/bin must come before /usr/bin in PATH for this to work
+path-order-warning = Warning: ~/.local/bin must come before /usr/bin in PATH for this to work
 appearance = Appearance
 window-opacity = Window Opacity
 performance = Performance

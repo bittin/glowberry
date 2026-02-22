@@ -17,32 +17,40 @@ glowberry-lib = { path = "../../crates/glowberry-lib" }
 # COSMIC/iced dependencies
 cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
 cosmic = { package = "libcosmic", git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
-    "a11y",
-    "about",
-    "dbus-config",
-    "single-instance",
-    "tokio",
-    "wayland",
-    "winit",
-    "wgpu",
+  "a11y",
+  "about",
+  "dbus-config",
+  "single-instance",
+  "tokio",
+  "wayland",
+  "winit",
+  "wgpu",
 ] }
 
 # Async runtime
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "fs"] }
 
 # GPU rendering for shader previews
-wgpu = { version = "26.0", default-features = false, features = ["vulkan", "wgsl"] }
+wgpu = { version = "26.0", default-features = false, features = [
+  "vulkan",
+  "wgsl",
+] }
 pollster = "0.4"
 bytemuck = "1.24"
 
 # Image handling
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = [
+  "png",
+  "jpeg",
+  "webp",
+] }
 fast_image_resize = { version = "5.1", features = ["image"] }
 jxl-oxide = { version = "0.12", features = ["image"] }
 
 # File system
 walkdir = "2.5"
 dirs = "5"
+xdg = "3"
 infer = "0.19"
 
 # Utilities
@@ -54,7 +62,10 @@ futures-util = "0.3"
 futures-lite = "2"
 
 # i18n
-i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+i18n-embed = { version = "0.16", features = [
+  "fluent-system",
+  "desktop-requester",
+] }
 i18n-embed-fl = "0.10"
 rust-embed = "8"
 slotmap = "1.1.1"

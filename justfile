@@ -20,7 +20,7 @@ linker-arg := if clang-path != '' {
 export RUSTFLAGS := linker-arg + env_var_or_default('RUSTFLAGS', '')
 
 rootdir := ''
-prefix := '/usr'
+prefix := env_var('HOME') / '.local'
 
 
 base-dir := absolute_path(clean(rootdir / prefix))
@@ -36,6 +36,9 @@ shaders-dir := base-dir / 'share' / 'glowberry' / 'shaders'
 
 # Helper script install location
 switch-script-dst := base-dir / 'bin' / 'glowberry-switch'
+
+# cosmic-bg symlink location
+cosmic-bg-link := base-dir / 'bin' / 'cosmic-bg'
 
 # Settings app data locations
 settings-desktop-src := 'apps' / settings-name / 'data' / settings-appid + '.desktop'
@@ -88,19 +91,17 @@ install: install-daemon install-settings
     @echo "  GlowBerry installed successfully!"
     @echo "=========================================="
     @echo ""
-    @echo "To enable GlowBerry as your background service, run:"
+    @echo "GlowBerry has been installed to ~/.local/bin/glowberry"
+    @echo "A symlink has been created: ~/.local/bin/cosmic-bg -> glowberry"
     @echo ""
-    @echo "  glowberry-switch enable"
-    @echo ""
-    @echo "This will create a symlink so cosmic-session runs"
-    @echo "GlowBerry instead of the original cosmic-bg."
-    @echo ""
-    @echo "You can also enable it from glowberry-settings."
+    @echo "Make sure ~/.local/bin is in your PATH (before /usr/bin)."
+    @echo "You can also enable/disable from glowberry-settings."
     @echo ""
 
 # Installs only the daemon
 install-daemon:
     install -Dm0755 {{bin-src}} {{bin-dst}}
+    ln -sf {{bin-dst}} {{cosmic-bg-link}}
     @just data/install
     @just data/icons/install
     # Install bundled shaders for live wallpapers
@@ -122,27 +123,18 @@ uninstall: _check-glowberry-disabled uninstall-daemon uninstall-settings
 # Check if GlowBerry override is disabled before uninstalling
 _check-glowberry-disabled:
     #!/usr/bin/env bash
-    if [ -L /usr/local/bin/cosmic-bg ]; then
-        TARGET=$(readlink /usr/local/bin/cosmic-bg)
+    if [ -L "{{cosmic-bg-link}}" ]; then
+        TARGET=$(readlink "{{cosmic-bg-link}}")
         if echo "$TARGET" | grep -q glowberry; then
-            echo "=========================================="
-            echo "  WARNING: GlowBerry is still enabled!"
-            echo "=========================================="
-            echo ""
-            echo "The symlink at /usr/local/bin/cosmic-bg still points to GlowBerry."
-            echo "Please disable it first before uninstalling:"
-            echo ""
-            echo "  glowberry-switch disable"
-            echo ""
-            echo "Then run 'sudo just uninstall' again."
-            echo ""
-            exit 1
+            echo "Removing cosmic-bg symlink at {{cosmic-bg-link}}"
+            rm -f "{{cosmic-bg-link}}"
         fi
     fi
 
 # Uninstalls only the daemon
 uninstall-daemon:
     rm -f {{bin-dst}}
+    rm -f {{cosmic-bg-link}}
     rm -rf {{shaders-dir}}
     rm -f {{switch-script-dst}}
     @just data/uninstall
@@ -155,41 +147,27 @@ uninstall-settings:
     rm -f {{settings-icon-dst}}
     rm -f {{settings-symbolic-dst}}
 
-# Enable GlowBerry as the cosmic-bg replacement via /usr/local/bin
+# Enable GlowBerry as the cosmic-bg replacement
 enable-glowberry:
     #!/usr/bin/env bash
     set -e
-    
+
     echo "Setting up GlowBerry as cosmic-bg replacement..."
-    
-    # Check PATH order - /usr/local/bin should come before /usr/bin
-    PATH_ORDER=$(echo "$PATH" | tr ':' '\n' | grep -n -E '^/usr/local/bin$|^/usr/bin$' | head -2)
-    LOCAL_POS=$(echo "$PATH_ORDER" | grep '/usr/local/bin' | cut -d: -f1)
-    USR_POS=$(echo "$PATH_ORDER" | grep -E '^[0-9]+:/usr/bin$' | cut -d: -f1)
-    
-    if [ -n "$LOCAL_POS" ] && [ -n "$USR_POS" ]; then
-        if [ "$LOCAL_POS" -gt "$USR_POS" ]; then
-            echo "WARNING: /usr/local/bin comes AFTER /usr/bin in your PATH!"
-            echo "         GlowBerry override may not work correctly."
-            echo "         Consider adding 'export PATH=/usr/local/bin:\$PATH' to your shell profile."
-            echo ""
-        fi
-    elif [ -z "$LOCAL_POS" ]; then
-        echo "WARNING: /usr/local/bin is not in your PATH!"
+
+    LOCAL_BIN="$HOME/.local/bin"
+
+    # Check PATH order - ~/.local/bin should come before /usr/bin
+    if ! echo "$PATH" | tr ':' '\n' | grep -q "^$LOCAL_BIN$"; then
+        echo "WARNING: ~/.local/bin is not in your PATH!"
         echo "         GlowBerry override may not work correctly."
-        echo "         Consider adding 'export PATH=/usr/local/bin:\$PATH' to your shell profile."
+        echo '         Consider adding: export PATH="$HOME/.local/bin:$PATH"'
         echo ""
     fi
-    
-    # Create /usr/local/bin if it doesn't exist
-    if [ ! -d /usr/local/bin ]; then
-        sudo mkdir -p /usr/local/bin
-    fi
-    
+
     # Create symlink to glowberry
-    sudo ln -sf {{bin-dst}} /usr/local/bin/cosmic-bg
-    echo "Created symlink: /usr/local/bin/cosmic-bg -> {{bin-dst}}"
-    
+    ln -sf {{bin-dst}} {{cosmic-bg-link}}
+    echo "Created symlink: {{cosmic-bg-link}} -> {{bin-dst}}"
+
     echo ""
     echo "GlowBerry is now active!"
     echo "The original cosmic-bg at /usr/bin/cosmic-bg is unchanged."
@@ -200,16 +178,16 @@ enable-glowberry:
 disable-glowberry:
     #!/usr/bin/env bash
     set -e
-    
+
     echo "Disabling GlowBerry override..."
-    
-    if [ -L /usr/local/bin/cosmic-bg ]; then
-        sudo rm /usr/local/bin/cosmic-bg
-        echo "Removed /usr/local/bin/cosmic-bg symlink"
+
+    if [ -L "{{cosmic-bg-link}}" ]; then
+        rm "{{cosmic-bg-link}}"
+        echo "Removed {{cosmic-bg-link}} symlink"
         echo ""
         echo "Original cosmic-bg at /usr/bin/cosmic-bg is now active!"
     else
-        echo "No GlowBerry override found at /usr/local/bin/cosmic-bg"
+        echo "No GlowBerry override found at {{cosmic-bg-link}}"
     fi
 
 # Check which cosmic-bg is currently active
@@ -217,46 +195,40 @@ which-cosmic-bg:
     #!/usr/bin/env bash
     echo "=== cosmic-bg status ==="
     echo ""
-    
+
+    LOCAL_BIN="$HOME/.local/bin"
+
     # Check PATH order
     echo "PATH order check:"
-    PATH_ORDER=$(echo "$PATH" | tr ':' '\n' | grep -n -E '^/usr/local/bin$|^/usr/bin$' | head -2)
-    LOCAL_POS=$(echo "$PATH_ORDER" | grep '/usr/local/bin' | cut -d: -f1)
-    USR_POS=$(echo "$PATH_ORDER" | grep -E '^[0-9]+:/usr/bin$' | cut -d: -f1)
-    
-    if [ -n "$LOCAL_POS" ] && [ -n "$USR_POS" ]; then
-        if [ "$LOCAL_POS" -lt "$USR_POS" ]; then
-            echo "  OK: /usr/local/bin (position $LOCAL_POS) comes before /usr/bin (position $USR_POS)"
-        else
-            echo "  WARNING: /usr/local/bin (position $LOCAL_POS) comes AFTER /usr/bin (position $USR_POS)"
-        fi
-    elif [ -z "$LOCAL_POS" ]; then
-        echo "  WARNING: /usr/local/bin is not in PATH"
+    if echo "$PATH" | tr ':' '\n' | grep -q "^$LOCAL_BIN$"; then
+        echo "  OK: ~/.local/bin is in PATH"
+    else
+        echo "  WARNING: ~/.local/bin is not in PATH"
     fi
-    
+
     # Check which binary is in PATH
     echo ""
     WHICH_BG=$(which cosmic-bg 2>/dev/null || echo "not found")
     echo "Active cosmic-bg: $WHICH_BG"
-    
+
     # Check if it's a symlink
     if [ -L "$WHICH_BG" ]; then
         TARGET=$(readlink -f "$WHICH_BG")
         echo "  -> Points to: $TARGET"
     fi
-    
-    # Check /usr/local/bin override
+
+    # Check ~/.local/bin override
     echo ""
-    echo "/usr/local/bin/cosmic-bg:"
-    if [ -e /usr/local/bin/cosmic-bg ]; then
-        ls -la /usr/local/bin/cosmic-bg
-        if [ -L /usr/local/bin/cosmic-bg ]; then
-            echo "  -> $(readlink /usr/local/bin/cosmic-bg)"
+    echo "{{cosmic-bg-link}}:"
+    if [ -e "{{cosmic-bg-link}}" ]; then
+        ls -la "{{cosmic-bg-link}}"
+        if [ -L "{{cosmic-bg-link}}" ]; then
+            echo "  -> $(readlink "{{cosmic-bg-link}}")"
         fi
     else
         echo "  Not present (GlowBerry override not active)"
     fi
-    
+
     # Check /usr/bin/cosmic-bg
     echo ""
     echo "/usr/bin/cosmic-bg:"
@@ -268,14 +240,77 @@ which-cosmic-bg:
 
 
 
+# Uninstall legacy system-wide installation (requires sudo)
+uninstall-legacy:
+    #!/usr/bin/env bash
+    set -e
+
+    echo "=========================================="
+    echo "  Uninstalling legacy system-wide GlowBerry"
+    echo "=========================================="
+    echo ""
+    echo "This removes files from the old system-wide installation"
+    echo "that used /usr/ prefix. Requires sudo."
+    echo ""
+
+    # First disable the old symlink if present
+    if [ -L /usr/local/bin/cosmic-bg ]; then
+        TARGET=$(readlink /usr/local/bin/cosmic-bg)
+        if echo "$TARGET" | grep -q glowberry; then
+            echo "Removing legacy symlink: /usr/local/bin/cosmic-bg -> $TARGET"
+            sudo rm -f /usr/local/bin/cosmic-bg
+        fi
+    fi
+
+    # Binaries
+    echo "Removing legacy binaries..."
+    sudo rm -f /usr/bin/glowberry
+    sudo rm -f /usr/bin/glowberry-settings
+    sudo rm -f /usr/bin/glowberry-switch
+
+    # Shaders
+    echo "Removing legacy shaders..."
+    sudo rm -rf /usr/share/glowberry
+
+    # Desktop files
+    echo "Removing legacy desktop files..."
+    sudo rm -f /usr/share/applications/io.github.hojjatabdollahi.glowberry.desktop
+    sudo rm -f /usr/share/applications/io.github.hojjatabdollahi.glowberry-settings.desktop
+
+    # Metainfo
+    sudo rm -f /usr/share/metainfo/io.github.hojjatabdollahi.glowberry.metainfo.xml
+
+    # Icons
+    echo "Removing legacy icons..."
+    sudo rm -f /usr/share/icons/hicolor/scalable/apps/io.github.hojjatabdollahi.glowberry.svg
+    sudo rm -f /usr/share/icons/hicolor/symbolic/apps/io.github.hojjatabdollahi.glowberry-symbolic.svg
+    sudo rm -f /usr/share/icons/hicolor/scalable/apps/io.github.hojjatabdollahi.glowberry-settings.svg
+    sudo rm -f /usr/share/icons/hicolor/symbolic/apps/io.github.hojjatabdollahi.glowberry-settings-symbolic.svg
+
+    # COSMIC config schema
+    echo "Removing legacy COSMIC schema..."
+    sudo rm -rf /usr/share/cosmic/io.github.hojjatabdollahi.glowberry
+
+    echo ""
+    echo "=========================================="
+    echo "  Legacy installation removed!"
+    echo "=========================================="
+    echo ""
+    echo "If you haven't already, disable the legacy override first:"
+    echo "  scripts/disable-glowberry-legacy.sh"
+    echo ""
+    echo "To install the new local version, run:"
+    echo "  just install"
+    echo ""
+
 # Update desktop database and icon cache after installation
 update-cache:
     #!/usr/bin/env bash
     if command -v update-desktop-database &> /dev/null; then
-        sudo update-desktop-database {{base-dir}}/share/applications
+        update-desktop-database {{base-dir}}/share/applications
     fi
     if command -v gtk-update-icon-cache &> /dev/null; then
-        sudo gtk-update-icon-cache -f {{base-dir}}/share/icons/hicolor
+        gtk-update-icon-cache -f {{base-dir}}/share/icons/hicolor
     fi
     echo "Application cache updated"
 

@@ -2,8 +2,8 @@
 #
 # glowberry-switch - Helper script to switch between GlowBerry and official cosmic-bg
 #
-# This works by creating a symlink at /usr/local/bin/cosmic-bg that points to glowberry.
-# Since /usr/local/bin is searched before /usr/bin, cosmic-session will run glowberry
+# This works by creating a symlink at ~/.local/bin/cosmic-bg that points to glowberry.
+# Since ~/.local/bin is searched before /usr/bin, cosmic-session will run glowberry
 # instead of the original cosmic-bg when enabled.
 #
 # Usage: glowberry-switch {enable|disable|status}
@@ -11,8 +11,9 @@
 
 set -e
 
-GLOWBERRY_BIN="/usr/bin/glowberry"
-SYMLINK_PATH="/usr/local/bin/cosmic-bg"
+LOCAL_BIN="$HOME/.local/bin"
+GLOWBERRY_BIN="$LOCAL_BIN/glowberry"
+SYMLINK_PATH="$LOCAL_BIN/cosmic-bg"
 ORIGINAL_COSMIC_BG="/usr/bin/cosmic-bg"
 
 usage() {
@@ -27,8 +28,8 @@ Commands:
 
 How it works:
     GlowBerry intercepts cosmic-session's call to cosmic-bg by placing a symlink
-    at /usr/local/bin/cosmic-bg that points to /usr/bin/glowberry. Since
-    /usr/local/bin is searched before /usr/bin in PATH, cosmic-session will
+    at ~/.local/bin/cosmic-bg that points to ~/.local/bin/glowberry. Since
+    ~/.local/bin is searched before /usr/bin in PATH, cosmic-session will
     run GlowBerry instead of the original cosmic-bg.
 
 Examples:
@@ -38,30 +39,29 @@ Examples:
 EOF
 }
 
-# Check if /usr/local/bin comes before /usr/bin in PATH
-# Returns 0 if PATH is correct, 1 if not, 2 if /usr/local/bin not in PATH
+# Check if ~/.local/bin comes before /usr/bin in PATH
+# Returns 0 if PATH is correct, 1 if not, 2 if ~/.local/bin not in PATH
 check_path_order() {
-    # Get positions of /usr/local/bin and /usr/bin in PATH
     local local_bin_pos=-1
     local usr_bin_pos=-1
     local i=0
-    
+
     IFS=':' read -ra path_array <<< "$PATH"
     for p in "${path_array[@]}"; do
-        if [ "$p" = "/usr/local/bin" ]; then
+        if [ "$p" = "$LOCAL_BIN" ]; then
             local_bin_pos=$i
         elif [ "$p" = "/usr/bin" ]; then
             usr_bin_pos=$i
         fi
         i=$((i + 1))
     done
-    
+
     if [ $local_bin_pos -eq -1 ]; then
-        return 2  # /usr/local/bin not in PATH at all
+        return 2  # ~/.local/bin not in PATH at all
     elif [ $usr_bin_pos -eq -1 ]; then
-        return 0  # /usr/bin not in PATH, so /usr/local/bin wins by default
+        return 0  # /usr/bin not in PATH, so ~/.local/bin wins by default
     elif [ $local_bin_pos -lt $usr_bin_pos ]; then
-        return 0  # /usr/local/bin comes first - correct
+        return 0  # ~/.local/bin comes first - correct
     else
         return 1  # /usr/bin comes first - wrong order
     fi
@@ -70,25 +70,25 @@ check_path_order() {
 warn_path_order() {
     check_path_order
     local result=$?
-    
+
     if [ $result -eq 1 ]; then
         echo ""
-        echo "WARNING: /usr/bin appears before /usr/local/bin in your PATH!"
+        echo "WARNING: /usr/bin appears before ~/.local/bin in your PATH!"
         echo "         GlowBerry override may not work correctly."
         echo ""
         echo "Your PATH order:"
         echo "$PATH" | tr ':' '\n' | grep -n "bin" | head -10
         echo ""
-        echo "To fix this, ensure /usr/local/bin comes before /usr/bin in your PATH."
-        echo "You may need to edit ~/.bashrc, ~/.profile, or /etc/environment"
+        echo "To fix this, ensure ~/.local/bin comes before /usr/bin in your PATH."
+        echo "You may need to edit ~/.bashrc, ~/.profile, or ~/.config/environment.d/"
         echo ""
     elif [ $result -eq 2 ]; then
         echo ""
-        echo "WARNING: /usr/local/bin is not in your PATH!"
+        echo "WARNING: ~/.local/bin is not in your PATH!"
         echo "         GlowBerry override will not work."
         echo ""
-        echo "Add /usr/local/bin to your PATH by editing ~/.bashrc or ~/.profile:"
-        echo "  export PATH=\"/usr/local/bin:\$PATH\""
+        echo 'Add ~/.local/bin to your PATH by editing ~/.bashrc or ~/.profile:'
+        echo '  export PATH="$HOME/.local/bin:$PATH"'
         echo ""
     fi
 }
@@ -103,13 +103,12 @@ enable_glowberry() {
     # Check PATH order and warn if incorrect
     warn_path_order
 
-    # Create the symlink (requires sudo)
+    # Create ~/.local/bin if needed
+    mkdir -p "$LOCAL_BIN"
+
+    # Create the symlink (no sudo needed)
     echo "Creating symlink at $SYMLINK_PATH -> $GLOWBERRY_BIN"
-    if ! sudo ln -sf "$GLOWBERRY_BIN" "$SYMLINK_PATH"; then
-        echo ""
-        echo "Error: Failed to create symlink. Make sure you have sudo privileges."
-        exit 1
-    fi
+    ln -sf "$GLOWBERRY_BIN" "$SYMLINK_PATH"
 
     # Kill any running cosmic-bg/glowberry processes so the new one starts
     echo "Restarting background service..."
@@ -124,11 +123,7 @@ enable_glowberry() {
 disable_glowberry() {
     if [ -L "$SYMLINK_PATH" ]; then
         echo "Removing symlink at $SYMLINK_PATH"
-        if ! sudo rm "$SYMLINK_PATH"; then
-            echo ""
-            echo "Error: Failed to remove symlink. Make sure you have sudo privileges."
-            exit 1
-        fi
+        rm "$SYMLINK_PATH"
     else
         echo "No symlink found at $SYMLINK_PATH"
     fi
@@ -152,11 +147,11 @@ show_status() {
     check_path_order
     local path_result=$?
     if [ $path_result -eq 0 ]; then
-        echo "PATH order: OK (/usr/local/bin before /usr/bin)"
+        echo "PATH order: OK (~/.local/bin before /usr/bin)"
     elif [ $path_result -eq 1 ]; then
-        echo "PATH order: WARNING - /usr/bin comes before /usr/local/bin!"
+        echo "PATH order: WARNING - /usr/bin comes before ~/.local/bin!"
     else
-        echo "PATH order: WARNING - /usr/local/bin not in PATH!"
+        echo "PATH order: WARNING - ~/.local/bin not in PATH!"
     fi
     echo ""
 

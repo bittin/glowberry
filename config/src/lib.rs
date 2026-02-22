@@ -228,13 +228,21 @@ impl Entry {
         }
     }
 
-    /// Fallback in case config and default schema can't be loaded
+    /// Fallback in case config and default schema can't be loaded.
+    /// Searches XDG data directories for the default cosmic wallpaper.
     pub fn fallback() -> Self {
+        let wallpaper = "backgrounds/cosmic/orion_nebula_nasa_heic0601a.jpg";
+
+        // Use xdg crate to search all XDG data directories
+        // (searches ~/.local/share, then XDG_DATA_DIRS / defaults)
+        let xdg = xdg::BaseDirectories::new();
+        let source_path = xdg
+            .find_data_file(wallpaper)
+            .unwrap_or_else(|| PathBuf::from("/usr/share").join(wallpaper));
+
         Self {
             output: String::from("all"),
-            source: Source::Path(PathBuf::from(
-                "/usr/share/backgrounds/cosmic/orion_nebula_nasa_heic0601a.jpg",
-            )),
+            source: Source::Path(source_path),
             filter_by_theme: true,
             rotation_frequency: 3600,
             filter_method: FilterMethod::default(),
