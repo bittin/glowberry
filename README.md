@@ -24,8 +24,10 @@ Build and install with [just](https://github.com/casey/just):
 
 ```sh
 just
-sudo just install
+just install
 ```
+
+This installs GlowBerry to `~/.local/bin/glowberry` and creates a symlink at `~/.local/bin/cosmic-bg` pointing to it. No sudo required.
 
 ### Dependencies
 
@@ -38,10 +40,10 @@ sudo just install
 
 ## Enabling GlowBerry
 
-GlowBerry works by intercepting cosmic-session's call to `cosmic-bg`. This is done by creating a symlink at `/usr/local/bin/cosmic-bg` that points to `/usr/bin/glowberry`. Since `/usr/local/bin` is searched before `/usr/bin` in PATH, cosmic-session will run GlowBerry instead.
+GlowBerry works by intercepting cosmic-session's call to `cosmic-bg`. The installer creates a symlink at `~/.local/bin/cosmic-bg` that points to `~/.local/bin/glowberry`. Since `~/.local/bin` is searched before `/usr/bin` in PATH, cosmic-session will run GlowBerry instead.
 
 > [!IMPORTANT]
-> For this to work, `/usr/local/bin` must appear before `/usr/bin` in your PATH. You can verify this by running:
+> For this to work, `~/.local/bin` must appear before `/usr/bin` in your PATH. You can verify this by running:
 > ```sh
 > echo $PATH | tr ':' '\n' | grep -n bin
 > ```
@@ -73,31 +75,41 @@ If you prefer to set it up manually:
 
 ```sh
 # Enable GlowBerry
-sudo ln -sf /usr/bin/glowberry /usr/local/bin/cosmic-bg
+ln -sf ~/.local/bin/glowberry ~/.local/bin/cosmic-bg
 pkill cosmic-bg  # Restart the service
 
 # Disable GlowBerry
-sudo rm /usr/local/bin/cosmic-bg
+rm ~/.local/bin/cosmic-bg
 pkill glowberry  # Restart the service
 ```
 
 ## Adding Shaders
 
-Shader wallpapers are WGSL files placed in `/usr/share/glowberry/shaders/`. Example shaders are included in the `examples/` directory.
+Shader wallpapers are WGSL files. GlowBerry searches for shaders in XDG data directories:
+- `~/.local/share/glowberry/shaders/` (user-local, installed by default)
+- Directories listed in `$XDG_DATA_DIRS` (e.g. `/usr/share/glowberry/shaders/`)
 
-To install the example shaders (they are installed by default when running `sudo just install`):
+Example shaders are included in the `examples/` directory and installed automatically by `just install`.
+
+To install additional shaders manually:
 ```sh
-sudo cp examples/*.wgsl /usr/share/glowberry/shaders/
+cp my_shader.wgsl ~/.local/share/glowberry/shaders/
 ```
 
 ## Uninstall
 
 ```sh
-sudo just uninstall
+just uninstall
 ```
 
-Make sure to disable GlowBerry first (`glowberry-switch disable`) to restore the original cosmic-bg.
+### Removing a legacy system-wide installation
 
+If you previously installed GlowBerry system-wide (with `sudo just install` to `/usr/`), first disable the old override, then remove the legacy files:
+
+```sh
+scripts/disable-glowberry-legacy.sh
+sudo just uninstall-legacy
+```
 
 ## Why GlowBerry?
 
