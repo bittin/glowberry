@@ -297,8 +297,8 @@ impl cosmic::Application for GlowBerrySettings {
         ));
         categories.selected = Some(Category::Wallpapers);
 
-        // Default wallpaper folder
-        let current_folder = PathBuf::from("/usr/share/backgrounds/cosmic");
+        // Default wallpaper folder - search XDG data directories
+        let current_folder = find_wallpaper_folder();
 
         // Pre-discover shaders so they're ready when user clicks "Live Wallpapers"
         let available_shaders = discover_shaders();
@@ -1783,53 +1783,54 @@ fn calculate_iteration_multiplier(
 fn discover_shaders() -> Vec<ShaderInfo> {
     let mut shaders = Vec::new();
 
-    // Check XDG_DATA_DIRS
-    if let Some(data_dirs) = std::env::var_os("XDG_DATA_DIRS") {
-        if let Some(data_dirs) = data_dirs.to_str() {
-            for data_dir in data_dirs.split(':') {
-                let shader_dir = PathBuf::from(data_dir).join("glowberry/shaders");
-                collect_shaders_from_dir(&shader_dir, &mut shaders);
-            }
+    // Use xdg crate to search all data directories for shader files.
+    // With prefix "glowberry", this searches:
+    //   ~/.local/share/glowberry/shaders/
+    //   $XDG_DATA_DIRS/glowberry/shaders/ (defaults: /usr/local/share, /usr/share)
+    // list_data_files_once deduplicates by filename (first occurrence wins).
+    let xdg = xdg::BaseDirectories::with_prefix("glowberry");
+    for path in xdg.list_data_files_once("shaders") {
+        if path.extension().is_some_and(|e| e == "wgsl") {
+            collect_shader_file(&path, &mut shaders);
         }
     }
 
-    // Standard paths
-    collect_shaders_from_dir(
-        std::path::Path::new("/usr/share/glowberry/shaders"),
-        &mut shaders,
-    );
-
     shaders.sort_by(|a, b| a.name.cmp(&b.name));
-    shaders.dedup_by(|a, b| a.name == b.name);
     shaders
 }
 
-fn collect_shaders_from_dir(dir: &std::path::Path, shaders: &mut Vec<ShaderInfo>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
+fn collect_shader_file(path: &std::path::Path, shaders: &mut Vec<ShaderInfo>) {
+    // Try to parse the shader to get metadata
+    let parsed = ParsedShader::parse(path);
 
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "wgsl") {
-            // Try to parse the shader to get metadata
-            let parsed = ParsedShader::parse(&path);
+    // Use parsed name if available, otherwise derive from filename
+    let name = parsed
+        .as_ref()
+        .filter(|p| !p.metadata.name.is_empty())
+        .map(|p| p.metadata.name.clone())
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| titlecase(&s.replace('_', " ")))
+                .unwrap_or_else(|| "Unknown".to_string())
+        });
 
-            // Use parsed name if available, otherwise derive from filename
-            let name = parsed
-                .as_ref()
-                .filter(|p| !p.metadata.name.is_empty())
-                .map(|p| p.metadata.name.clone())
-                .unwrap_or_else(|| {
-                    path.file_stem()
-                        .and_then(|s| s.to_str())
-                        .map(|s| titlecase(&s.replace('_', " ")))
-                        .unwrap_or_else(|| "Unknown".to_string())
-                });
+    shaders.push(ShaderInfo {
+        path: path.to_path_buf(),
+        name,
+        parsed,
+    });
+}
 
-            shaders.push(ShaderInfo { path, name, parsed });
-        }
-    }
+/// Find the wallpaper folder by searching XDG data directories.
+fn find_wallpaper_folder() -> PathBuf {
+    let subdir = "backgrounds/cosmic";
+
+    // Use xdg crate to search all data directories
+    // (checks ~/.local/share, then XDG_DATA_DIRS / defaults)
+    let xdg = xdg::BaseDirectories::new();
+    xdg.find_data_file(subdir)
+        .unwrap_or_else(|| PathBuf::from("/usr/share").join(subdir))
 }
 
 fn titlecase(s: &str) -> String {
@@ -1845,20 +1846,24 @@ fn titlecase(s: &str) -> String {
         .join(" ")
 }
 
-/// Check if /usr/local/bin comes before /usr/bin in PATH.
+/// Check if ~/.local/bin comes before /usr/bin in PATH.
 ///
 /// Returns:
 /// - `Ok(true)` if PATH order is correct (or /usr/bin not in PATH)
-/// - `Ok(false)` if /usr/bin comes before /usr/local/bin
-/// - `Err(msg)` if /usr/local/bin is not in PATH at all
+/// - `Ok(false)` if /usr/bin comes before ~/.local/bin
+/// - `Err(msg)` if ~/.local/bin is not in PATH at all
 fn check_path_order() -> Result<bool, &'static str> {
-    let path = std::env::var("PATH").unwrap_or_default();
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    let local_bin = dirs::home_dir()
+        .map(|h| h.join(".local/bin"))
+        .unwrap_or_default();
+    let local_bin_str = local_bin.to_string_lossy();
 
     let mut local_bin_pos: Option<usize> = None;
     let mut usr_bin_pos: Option<usize> = None;
 
-    for (i, p) in path.split(':').enumerate() {
-        if p == "/usr/local/bin" && local_bin_pos.is_none() {
+    for (i, p) in path_var.split(':').enumerate() {
+        if p == local_bin_str.as_ref() && local_bin_pos.is_none() {
             local_bin_pos = Some(i);
         } else if p == "/usr/bin" && usr_bin_pos.is_none() {
             usr_bin_pos = Some(i);
@@ -1866,19 +1871,22 @@ fn check_path_order() -> Result<bool, &'static str> {
     }
 
     match (local_bin_pos, usr_bin_pos) {
-        (None, _) => Err("/usr/local/bin is not in PATH"),
-        (Some(_), None) => Ok(true), // /usr/bin not in PATH, so /usr/local/bin wins
+        (None, _) => Err("~/.local/bin is not in PATH"),
+        (Some(_), None) => Ok(true), // /usr/bin not in PATH, so ~/.local/bin wins
         (Some(local), Some(usr)) => Ok(local < usr),
     }
 }
 
 /// Check if GlowBerry is currently enabled as the default background service.
 ///
-/// This works by checking if /usr/local/bin/cosmic-bg exists and is a symlink
-/// pointing to glowberry. Since /usr/local/bin is searched before /usr/bin in PATH,
+/// This works by checking if ~/.local/bin/cosmic-bg exists and is a symlink
+/// pointing to glowberry. Since ~/.local/bin is searched before /usr/bin in PATH,
 /// cosmic-session will run glowberry instead of the original cosmic-bg when enabled.
 fn is_glowberry_default() -> bool {
-    match std::fs::read_link("/usr/local/bin/cosmic-bg") {
+    let symlink_path = dirs::home_dir()
+        .map(|h| h.join(".local/bin/cosmic-bg"))
+        .unwrap_or_default();
+    match std::fs::read_link(symlink_path) {
         Ok(target) => target.to_string_lossy().contains("glowberry"),
         Err(_) => false,
     }
@@ -1891,12 +1899,17 @@ fn is_path_order_correct() -> bool {
 
 /// Enable or disable GlowBerry as the default background service.
 ///
-/// When enabled, creates a symlink at /usr/local/bin/cosmic-bg -> /usr/bin/glowberry.
+/// When enabled, creates a symlink at ~/.local/bin/cosmic-bg -> ~/.local/bin/glowberry.
 /// When disabled, removes the symlink so the original /usr/bin/cosmic-bg is used.
 ///
-/// This requires elevated privileges for the symlink operations, so we use pkexec.
+/// No elevated privileges needed since we operate in ~/.local/bin/.
 async fn set_glowberry_default(enable: bool) -> Result<bool, String> {
     use tokio::process::Command;
+
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let local_bin = home.join(".local/bin");
+    let symlink_path = local_bin.join("cosmic-bg");
+    let glowberry_bin = local_bin.join("glowberry");
 
     // Check PATH order when enabling
     if enable {
@@ -1904,15 +1917,15 @@ async fn set_glowberry_default(enable: bool) -> Result<bool, String> {
             Err(msg) => {
                 return Err(format!(
                     "Cannot enable GlowBerry: {}. \
-                    Add /usr/local/bin to your PATH before /usr/bin.",
+                    Add ~/.local/bin to your PATH before /usr/bin.",
                     msg
                 ));
             }
             Ok(false) => {
                 return Err(
-                    "Cannot enable GlowBerry: /usr/bin comes before /usr/local/bin in PATH. \
+                    "Cannot enable GlowBerry: /usr/bin comes before ~/.local/bin in PATH. \
                     The symlink override won't work. Please fix your PATH configuration \
-                    so that /usr/local/bin appears before /usr/bin."
+                    so that ~/.local/bin appears before /usr/bin."
                         .to_string(),
                 );
             }
@@ -1920,31 +1933,28 @@ async fn set_glowberry_default(enable: bool) -> Result<bool, String> {
         }
     }
 
-    // Get current user for pkill
-    let user = std::env::var("USER").unwrap_or_default();
+    if enable {
+        // Ensure ~/.local/bin exists
+        std::fs::create_dir_all(&local_bin)
+            .map_err(|e| format!("Failed to create ~/.local/bin: {}", e))?;
 
-    let symlink_script = if enable {
+        // Remove existing symlink/file if present
+        let _ = std::fs::remove_file(&symlink_path);
+
         // Create symlink to make glowberry intercept cosmic-bg calls
-        "ln -sf /usr/bin/glowberry /usr/local/bin/cosmic-bg"
+        std::os::unix::fs::symlink(&glowberry_bin, &symlink_path)
+            .map_err(|e| format!("Failed to create symlink: {}", e))?;
     } else {
         // Remove symlink to restore original cosmic-bg
-        "rm -f /usr/local/bin/cosmic-bg"
-    };
-
-    // Update the symlink with elevated privileges
-    let output = Command::new("pkexec")
-        .args(["sh", "-c", symlink_script])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run pkexec: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to update symlink: {}", stderr));
+        if symlink_path.is_symlink() {
+            std::fs::remove_file(&symlink_path)
+                .map_err(|e| format!("Failed to remove symlink: {}", e))?;
+        }
     }
 
     // Kill the daemon processes so the correct one restarts
     // Use -x for exact match to avoid killing glowberry-settings
+    let user = std::env::var("USER").unwrap_or_default();
     if !user.is_empty() {
         // Kill glowberry daemon (exact match, not glowberry-settings)
         let _ = Command::new("pkill")

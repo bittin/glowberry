@@ -2412,6 +2412,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tracing",
+ "xdg",
 ]
 
 [[package]]
@@ -2472,6 +2473,7 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "wgpu 26.0.1",
+ "xdg",
 ]
 
 [[package]]
